@@ -18,6 +18,15 @@ export default function MeetingCard({ meeting }: { meeting: MeetingRecord }) {
               {meeting.workspaceName}
             </p>
           ) : null}
+          {meeting.tags?.length ? (
+            <div className="mt-2 flex flex-wrap gap-1.5">
+              {meeting.tags.slice(0, 3).map((tag) => (
+                <span key={tag.id} className="rounded-md border border-line bg-white px-2 py-1 text-xs text-neutral-600">
+                  {tag.name}
+                </span>
+              ))}
+            </div>
+          ) : null}
         </div>
         <time className="inline-flex items-center gap-1.5 text-sm text-neutral-600">
           <CalendarDays className="h-4 w-4" aria-hidden />

@@ -2,10 +2,13 @@ import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
 import AppShell from "@/components/AppShell";
+import CommentsPanel from "@/components/CommentsPanel";
 import DuplicateMeetings from "@/components/DuplicateMeetings";
 import MeetingSummary from "@/components/MeetingSummary";
+import TagsPanel from "@/components/TagsPanel";
 import { requireUser } from "@/lib/auth";
 import { findDuplicateMeetings, getMeetingById } from "@/lib/meetings";
+import { getWorkspaceMembers } from "@/lib/workspace-invites";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -20,6 +23,7 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
   }
 
   const duplicateCandidates = meeting.mergedFrom?.length ? [] : await findDuplicateMeetings(meeting);
+  const members = meeting.workspaceId ? await getWorkspaceMembers(meeting.workspaceId) : [];
 
   return (
     <AppShell
@@ -39,7 +43,13 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
       <div className="mx-auto max-w-5xl">
         <section className="mt-8">
           <DuplicateMeetings meeting={meeting} candidates={duplicateCandidates} />
-          <MeetingSummary meeting={meeting} />
+          <div className="mb-8">
+            <TagsPanel meetingId={meeting.id} workspaceId={meeting.workspaceId} tags={meeting.tags ?? []} />
+          </div>
+          <MeetingSummary meeting={meeting} members={members} />
+          <div className="mt-8">
+            <CommentsPanel meetingId={meeting.id} comments={meeting.comments ?? []} />
+          </div>
         </section>
       </div>
     </AppShell>

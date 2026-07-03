@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { Mic } from "lucide-react";
+import { LayoutDashboard, Mic } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import MeetingCard from "@/components/MeetingCard";
 import MeetingSearch from "@/components/MeetingSearch";
@@ -13,20 +13,21 @@ export const dynamic = "force-dynamic";
 export default async function MeetingsPage({
   searchParams
 }: {
-  searchParams: Promise<{ workspaceId?: string; q?: string }>;
+  searchParams: Promise<{ workspaceId?: string; q?: string; tag?: string }>;
 }) {
   await requireUser();
-  const { workspaceId, q } = await searchParams;
+  const { workspaceId, q, tag } = await searchParams;
   const [allMeetings, workspaces] = await Promise.all([getMeetings(workspaceId), getWorkspaces()]);
   const selectedWorkspace = workspaceId ? workspaces.find((workspace) => workspace.id === workspaceId) : null;
   const query = q?.trim().toLowerCase() ?? "";
-  const meetings = query
+  const meetings = (query
     ? allMeetings.filter((meeting) =>
         [meeting.title, meeting.summary.shortSummary, meeting.transcript].some((value) =>
           value.toLowerCase().includes(query)
         )
       )
-    : allMeetings;
+    : allMeetings
+  ).filter((meeting) => (tag ? meeting.tags?.some((item) => item.name === tag) : true));
 
   return (
     <AppShell
@@ -93,10 +94,23 @@ export default async function MeetingsPage({
                 <Mic className="h-5 w-5" aria-hidden />
                 Record in {selectedWorkspace.name}
               </Link>
+              <Link
+                href={`/workspaces/${selectedWorkspace.id}`}
+                className="inline-flex w-fit items-center gap-2 rounded-md border border-accent/30 bg-white px-4 py-3 font-semibold text-accent shadow-sm transition hover:border-accent"
+              >
+                <LayoutDashboard className="h-5 w-5" aria-hidden />
+                Dashboard
+              </Link>
             </div>
             </div>
             <WorkspaceInvitePanel workspaceId={selectedWorkspace.id} />
           </section>
+        ) : null}
+
+        {tag ? (
+          <p className="mt-5 text-sm text-neutral-600">
+            Filtered by tag: <span className="font-semibold text-ink">{tag}</span>
+          </p>
         ) : null}
 
         {meetings.length > 0 ? (

@@ -1,8 +1,9 @@
 import ActionItemsTable from "@/components/ActionItemsTable";
 import CopyButton from "@/components/CopyButton";
 import DownloadNotesButton from "@/components/DownloadNotesButton";
+import EmailTeamButton from "@/components/EmailTeamButton";
 import EmailButton from "@/components/EmailButton";
-import type { MeetingRecord } from "@/lib/types";
+import type { MeetingRecord, WorkspaceMember } from "@/lib/types";
 import { notesToText, safeFileName } from "@/lib/utils";
 
 function ListSection({ title, items }: { title: string; items: string[] }) {
@@ -24,7 +25,13 @@ function ListSection({ title, items }: { title: string; items: string[] }) {
   );
 }
 
-export default function MeetingSummary({ meeting }: { meeting: MeetingRecord }) {
+export default function MeetingSummary({
+  meeting,
+  members = []
+}: {
+  meeting: MeetingRecord;
+  members?: WorkspaceMember[];
+}) {
   const notesText = notesToText(meeting.summary, meeting.transcript);
   const actionItems = meeting.actionItems?.length ? meeting.actionItems : meeting.summary.actionItems;
 
@@ -37,6 +44,7 @@ export default function MeetingSummary({ meeting }: { meeting: MeetingRecord }) 
           <EmailButton subject={`Follow-up: ${meeting.title}`} body={meeting.summary.followUpEmail} />
           <DownloadNotesButton filename={`${safeFileName(meeting.title) || "meeting-notes"}.md`} text={notesText} />
         </div>
+        <EmailTeamButton members={members} subject={`Follow-up: ${meeting.title}`} body={notesText} />
         <div className="surface rounded-md p-5">
           <h2 className="text-lg font-semibold text-ink">Short summary</h2>
           <p className="mt-3 leading-7 text-neutral-700">{meeting.summary.shortSummary}</p>
@@ -48,7 +56,7 @@ export default function MeetingSummary({ meeting }: { meeting: MeetingRecord }) 
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-ink">Action items</h2>
-        <ActionItemsTable items={actionItems} />
+        <ActionItemsTable items={actionItems} members={members} />
       </section>
 
       <ListSection title="Unresolved questions" items={meeting.summary.unresolvedQuestions} />

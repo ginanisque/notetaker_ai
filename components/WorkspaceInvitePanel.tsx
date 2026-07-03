@@ -1,9 +1,8 @@
 "use client";
 
-import { Copy, Send, Users } from "lucide-react";
-import { useEffect, useMemo, useState, type FormEvent } from "react";
+import { Send, Trash2, Users } from "lucide-react";
+import { useEffect, useState, type FormEvent } from "react";
 import StatusMessage from "@/components/StatusMessage";
-import type { WorkspaceInvite } from "@/lib/types";
 
 interface WorkspaceMemberView {
   id: string;
@@ -15,22 +14,14 @@ interface WorkspaceMemberView {
 export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: string }) {
   const [email, setEmail] = useState("");
   const [members, setMembers] = useState<WorkspaceMemberView[]>([]);
-  const [invites, setInvites] = useState<WorkspaceInvite[]>([]);
-  const [lastInvite, setLastInvite] = useState<WorkspaceInvite | null>(null);
   const [error, setError] = useState("");
-  const [copied, setCopied] = useState(false);
+  const [message, setMessage] = useState("");
   const [isSaving, setIsSaving] = useState(false);
-
-  const inviteLink = useMemo(() => {
-    if (!lastInvite || typeof window === "undefined") return "";
-    return `${window.location.origin}/invites/${lastInvite.id}`;
-  }, [lastInvite]);
 
   async function loadMembers() {
     const response = await fetch(`/api/workspace-invites?workspaceId=${workspaceId}`, { cache: "no-store" });
     const body = (await response.json()) as {
       members?: WorkspaceMemberView[];
-      invites?: WorkspaceInvite[];
       error?: string;
     };
 
@@ -39,7 +30,6 @@ export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: str
     }
 
     setMembers(body.members ?? []);
-    setInvites(body.invites ?? []);
   }
 
   useEffect(() => {
@@ -51,7 +41,7 @@ export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: str
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setError("");
-    setCopied(false);
+    setMessage("");
 
     if (!email.trim()) {
       setError("Email is required.");
@@ -61,19 +51,19 @@ export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: str
     setIsSaving(true);
 
     try {
-      const response = await fetch("/api/workspace-invites", {
+      const response = await fetch("/api/workspace-members", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ workspaceId, email: email.trim(), role: "member" })
+        body: JSON.stringify({ workspaceId, email: email.trim() })
       });
-      const body = (await response.json()) as WorkspaceInvite | { error?: string };
+      const body = (await response.json()) as { error?: string };
 
       if (!response.ok || "error" in body) {
         throw new Error(("error" in body && body.error) || "Unable to create invite.");
       }
 
-      setLastInvite(body as WorkspaceInvite);
       setEmail("");
+      setMessage("Member added to workspace.");
       await loadMembers();
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Unable to create invite.");
@@ -82,10 +72,17 @@ export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: str
     }
   }
 
-  async function copyInviteLink() {
-    if (!inviteLink) return;
-    await navigator.clipboard.writeText(inviteLink);
-    setCopied(true);
+  async function removeMember(memberId: string) {
+    setError("");
+    const response = await fetch(`/api/workspace-members?workspaceId=${workspaceId}&memberId=${memberId}`, {
+      method: "DELETE"
+    });
+    const body = (await response.json()) as { error?: string };
+    if (!response.ok) {
+      setError(body.error || "Unable to remove member.");
+      return;
+    }
+    await loadMembers();
   }
 
   return (
@@ -109,39 +106,36 @@ export default function WorkspaceInvitePanel({ workspaceId }: { workspaceId: str
           className="inline-flex items-center justify-center gap-2 rounded-md bg-accent px-4 py-2.5 text-sm font-semibold text-white shadow-sm transition hover:bg-[#1f5f55] disabled:cursor-not-allowed disabled:opacity-50"
         >
           <Send className="h-4 w-4" aria-hidden />
-          Invite
+          Add
         </button>
       </form>
 
-      {lastInvite ? (
-        <div className="mt-3 rounded-md border border-line bg-white p-3">
-          <p className="text-sm text-neutral-700">Share this invite link with {lastInvite.invitedEmail}.</p>
-          <button
-            type="button"
-            onClick={() => void copyInviteLink()}
-            className="mt-2 inline-flex items-center gap-2 rounded-md border border-line px-3 py-2 text-sm font-semibold text-ink transition hover:border-accent hover:text-accent"
-          >
-            <Copy className="h-4 w-4" aria-hidden />
-            {copied ? "Copied" : "Copy invite link"}
-          </button>
-        </div>
-      ) : null}
-
       <div className="mt-4 grid gap-2 text-sm">
-        {members.slice(0, 4).map((member) => (
+        {members.slice(0, 8).map((member) => (
           <div key={member.id} className="flex items-center justify-between rounded-md bg-white px-3 py-2">
             <span className="truncate">{member.fullName || member.email || "Workspace member"}</span>
-            <span className="text-xs font-semibold uppercase text-neutral-500">{member.role}</span>
-          </div>
-        ))}
-        {invites.filter((invite) => invite.status === "pending").slice(0, 3).map((invite) => (
-          <div key={invite.id} className="flex items-center justify-between rounded-md bg-[#fff7e8] px-3 py-2">
-            <span className="truncate">{invite.invitedEmail}</span>
-            <span className="text-xs font-semibold uppercase text-gold">pending</span>
+            <div className="flex items-center gap-2">
+              <span className="text-xs font-semibold uppercase text-neutral-500">{member.role}</span>
+              {member.role !== "owner" ? (
+                <button
+                  type="button"
+                  onClick={() => void removeMember(member.id)}
+                  className="text-neutral-400 transition hover:text-red-700"
+                  title="Remove member"
+                >
+                  <Trash2 className="h-4 w-4" aria-hidden />
+                </button>
+              ) : null}
+            </div>
           </div>
         ))}
       </div>
 
+      {message ? (
+        <div className="mt-3">
+          <StatusMessage tone="success">{message}</StatusMessage>
+        </div>
+      ) : null}
       {error ? (
         <div className="mt-3">
           <StatusMessage tone="error">{error}</StatusMessage>

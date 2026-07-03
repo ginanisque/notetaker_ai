@@ -8,7 +8,7 @@ import type {
   Workspace
 } from "@/lib/types";
 import { isMeetingSummary } from "@/lib/validation";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 type ActionItemRow = {
   id: string;
@@ -17,8 +17,11 @@ type ActionItemRow = {
   owner_name: string;
   owner_email: string | null;
   deadline: string;
-  status: "open" | "done";
+  assigned_user_id: string | null;
+  status: "open" | "in_progress" | "done";
   created_at: string;
+  updated_at: string;
+  meetings?: { title: string; date: string } | null;
 };
 
 type WorkspaceRow = {
@@ -43,6 +46,31 @@ type MeetingRow = {
   created_at: string;
   workspaces?: { name: string } | null;
   action_items?: ActionItemRow[];
+  comments?: CommentRow[];
+  meeting_tag_links?: Array<{ meeting_tags: TagRow | null }>;
+};
+
+type CommentRow = {
+  id: string;
+  meeting_id: string;
+  user_id: string;
+  body: string;
+  created_at: string;
+  updated_at: string;
+  profiles?: { email: string | null; full_name: string | null } | null;
+};
+
+type TagRow = {
+  id: string;
+  workspace_id: string | null;
+  name: string;
+  created_at: string;
+};
+
+type ProfileRow = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
 };
 
 function mapActionItem(row: ActionItemRow) {
@@ -52,8 +80,34 @@ function mapActionItem(row: ActionItemRow) {
     task: row.task,
     owner: row.owner_name,
     ownerEmail: row.owner_email,
+    assignedUserId: row.assigned_user_id,
     deadline: row.deadline,
     status: row.status,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at,
+    meetingTitle: row.meetings?.title,
+    meetingDate: row.meetings?.date
+  };
+}
+
+function mapComment(row: CommentRow) {
+  return {
+    id: row.id,
+    meetingId: row.meeting_id,
+    userId: row.user_id,
+    authorName: row.profiles?.full_name ?? null,
+    authorEmail: row.profiles?.email ?? null,
+    body: row.body,
+    createdAt: row.created_at,
+    updatedAt: row.updated_at
+  };
+}
+
+function mapTag(row: TagRow) {
+  return {
+    id: row.id,
+    workspaceId: row.workspace_id,
+    name: row.name,
     createdAt: row.created_at
   };
 }
@@ -94,8 +148,92 @@ function mapMeeting(row: MeetingRow): MeetingRecord {
     summary,
     audioUrl: row.audio_url,
     actionItems: row.action_items?.map(mapActionItem) ?? [],
+    comments: row.comments?.map(mapComment) ?? [],
+    tags: row.meeting_tag_links?.map((link) => link.meeting_tags).filter((tag): tag is TagRow => Boolean(tag)).map(mapTag) ?? [],
     createdAt: row.created_at
   };
+}
+
+function isMissingOptionalCollaborationSchema(error: { message?: string; code?: string }) {
+  const message = (error.message ?? "").toLowerCase();
+  return (
+    error.code === "PGRST200" ||
+    message.includes("meeting_tag_links") ||
+    message.includes("meeting_tags") ||
+    message.includes("comments") ||
+    message.includes("schema cache")
+  );
+}
+
+function normalizeEmbeddedTag(value: TagRow | TagRow[] | null): TagRow | null {
+  if (Array.isArray(value)) {
+    return value[0] ?? null;
+  }
+
+  return value;
+}
+
+async function getTagLinksByMeetingIds(meetingIds: string[]) {
+  if (meetingIds.length === 0) return new Map<string, Array<{ meeting_tags: TagRow | null }>>();
+
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("meeting_tag_links")
+    .select("meeting_id, meeting_tags(*)")
+    .in("meeting_id", meetingIds);
+
+  if (error) {
+    if (isMissingOptionalCollaborationSchema(error)) {
+      return new Map<string, Array<{ meeting_tags: TagRow | null }>>();
+    }
+    throw new Error(error.message);
+  }
+
+  const links = new Map<string, Array<{ meeting_tags: TagRow | null }>>();
+  for (const row of (data ?? []) as Array<{ meeting_id: string; meeting_tags: TagRow | TagRow[] | null }>) {
+    const meetingTags = links.get(row.meeting_id) ?? [];
+    meetingTags.push({ meeting_tags: normalizeEmbeddedTag(row.meeting_tags) });
+    links.set(row.meeting_id, meetingTags);
+  }
+
+  return links;
+}
+
+async function getProfilesByUserId(userIds: string[]) {
+  if (userIds.length === 0) return new Map<string, ProfileRow>();
+
+  try {
+    const supabase = createSupabaseAdminClient();
+    const { data, error } = await supabase.from("profiles").select("id, email, full_name").in("id", userIds);
+
+    if (error) return new Map<string, ProfileRow>();
+
+    return new Map(((data ?? []) as ProfileRow[]).map((profile) => [profile.id, profile]));
+  } catch {
+    return new Map<string, ProfileRow>();
+  }
+}
+
+async function getCommentsByMeetingId(meetingId: string) {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase
+    .from("comments")
+    .select("*")
+    .eq("meeting_id", meetingId)
+    .order("created_at", { ascending: true });
+
+  if (error) {
+    if (isMissingOptionalCollaborationSchema(error)) return [];
+    throw new Error(error.message);
+  }
+
+  const comments = (data ?? []) as CommentRow[];
+  const profilesByUserId = await getProfilesByUserId([...new Set(comments.map((comment) => comment.user_id))]);
+
+  return comments.map((comment) => ({
+    ...comment,
+    profiles: profilesByUserId.get(comment.user_id) ?? null
+  }));
 }
 
 export async function getWorkspaces(): Promise<Workspace[]> {
@@ -150,7 +288,15 @@ export async function getMeetings(workspaceId?: string | null): Promise<MeetingR
     throw new Error(error.message);
   }
 
-  return ((data ?? []) as MeetingRow[]).map(mapMeeting);
+  const meetings = (data ?? []) as MeetingRow[];
+  const tagLinksByMeetingId = await getTagLinksByMeetingIds(meetings.map((meeting) => meeting.id));
+
+  return meetings
+    .map((meeting) => ({
+      ...meeting,
+      meeting_tag_links: tagLinksByMeetingId.get(meeting.id) ?? []
+    }))
+    .map(mapMeeting);
 }
 
 export async function getMeetingById(id: string): Promise<MeetingRecord | null> {
@@ -168,7 +314,13 @@ export async function getMeetingById(id: string): Promise<MeetingRecord | null> 
     throw new Error(error.message);
   }
 
-  return mapMeeting(data as MeetingRow);
+  const [tagLinksByMeetingId, comments] = await Promise.all([getTagLinksByMeetingIds([id]), getCommentsByMeetingId(id)]);
+
+  return mapMeeting({
+    ...(data as MeetingRow),
+    comments,
+    meeting_tag_links: tagLinksByMeetingId.get(id) ?? []
+  });
 }
 
 export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecord> {
@@ -206,6 +358,7 @@ export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecor
     task: item.task,
     owner_name: item.owner || "Not specified",
     owner_email: item.ownerEmail ?? null,
+    assigned_user_id: item.assignedUserId ?? null,
     deadline: item.deadline || "Not specified",
     status: item.status ?? "open"
   }));

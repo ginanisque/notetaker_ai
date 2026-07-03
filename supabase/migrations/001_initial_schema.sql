@@ -70,9 +70,34 @@ create table if not exists public.action_items (
   task text not null,
   owner_name text not null,
   owner_email text,
+  assigned_user_id uuid references auth.users(id) on delete set null,
   deadline text not null default 'Not specified',
-  status text not null default 'open' check (status in ('open', 'done')),
-  created_at timestamp with time zone not null default now()
+  status text not null default 'open' check (status in ('open', 'in_progress', 'done')),
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now()
+);
+
+create table if not exists public.comments (
+  id uuid primary key default gen_random_uuid(),
+  meeting_id uuid not null references public.meetings(id) on delete cascade,
+  user_id uuid not null references auth.users(id) on delete cascade,
+  body text not null,
+  created_at timestamp with time zone not null default now(),
+  updated_at timestamp with time zone not null default now()
+);
+
+create table if not exists public.meeting_tags (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid references public.workspaces(id) on delete cascade,
+  name text not null,
+  created_at timestamp with time zone not null default now(),
+  unique (workspace_id, name)
+);
+
+create table if not exists public.meeting_tag_links (
+  meeting_id uuid not null references public.meetings(id) on delete cascade,
+  tag_id uuid not null references public.meeting_tags(id) on delete cascade,
+  primary key (meeting_id, tag_id)
 );
 
 create index if not exists workspace_members_workspace_id_idx on public.workspace_members(workspace_id);
@@ -83,6 +108,10 @@ create index if not exists meetings_owner_id_idx on public.meetings(owner_id);
 create index if not exists meetings_workspace_id_idx on public.meetings(workspace_id);
 create index if not exists action_items_meeting_id_idx on public.action_items(meeting_id);
 create index if not exists action_items_owner_email_idx on public.action_items(owner_email);
+create index if not exists action_items_assigned_user_id_idx on public.action_items(assigned_user_id);
+create index if not exists comments_meeting_id_idx on public.comments(meeting_id);
+create index if not exists meeting_tags_workspace_id_idx on public.meeting_tags(workspace_id);
+create index if not exists meeting_tag_links_tag_id_idx on public.meeting_tag_links(tag_id);
 create index if not exists meeting_sessions_workspace_status_idx on public.meeting_sessions(workspace_id, status);
 create index if not exists meetings_meeting_session_id_idx on public.meetings(meeting_session_id);
 
@@ -184,12 +213,50 @@ as $$
   );
 $$;
 
+create or replace function public.is_workspace_owner(target_workspace_id uuid)
+returns boolean
+language sql
+stable
+security definer
+set search_path = public
+as $$
+  select exists (
+    select 1
+    from public.workspaces w
+    where w.id = target_workspace_id
+      and w.owner_id = auth.uid()
+  );
+$$;
+
+create or replace function public.touch_updated_at()
+returns trigger
+language plpgsql
+as $$
+begin
+  new.updated_at = now();
+  return new;
+end;
+$$;
+
+drop trigger if exists touch_action_items_updated_at on public.action_items;
+create trigger touch_action_items_updated_at
+before update on public.action_items
+for each row execute function public.touch_updated_at();
+
+drop trigger if exists touch_comments_updated_at on public.comments;
+create trigger touch_comments_updated_at
+before update on public.comments
+for each row execute function public.touch_updated_at();
+
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
 alter table public.workspace_invites enable row level security;
 alter table public.meetings enable row level security;
 alter table public.action_items enable row level security;
+alter table public.comments enable row level security;
+alter table public.meeting_tags enable row level security;
+alter table public.meeting_tag_links enable row level security;
 alter table public.meeting_sessions enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
@@ -343,6 +410,54 @@ using (
   )
 );
 
+drop policy if exists "comments_select_accessible_meeting" on public.comments;
+create policy "comments_select_accessible_meeting"
+on public.comments for select
+using (public.can_access_meeting(meeting_id));
+
+drop policy if exists "comments_insert_accessible_meeting" on public.comments;
+create policy "comments_insert_accessible_meeting"
+on public.comments for insert
+with check (user_id = auth.uid() and public.can_access_meeting(meeting_id));
+
+drop policy if exists "comments_delete_author_or_workspace_owner" on public.comments;
+create policy "comments_delete_author_or_workspace_owner"
+on public.comments for delete
+using (
+  user_id = auth.uid()
+  or exists (
+    select 1 from public.meetings m
+    where m.id = meeting_id
+      and m.workspace_id is not null
+      and public.is_workspace_owner(m.workspace_id)
+  )
+);
+
+drop policy if exists "meeting_tags_select_member_or_personal" on public.meeting_tags;
+create policy "meeting_tags_select_member_or_personal"
+on public.meeting_tags for select
+using (workspace_id is null or public.is_workspace_member(workspace_id));
+
+drop policy if exists "meeting_tags_insert_member_or_personal" on public.meeting_tags;
+create policy "meeting_tags_insert_member_or_personal"
+on public.meeting_tags for insert
+with check (workspace_id is null or public.is_workspace_member(workspace_id));
+
+drop policy if exists "meeting_tag_links_select_accessible_meeting" on public.meeting_tag_links;
+create policy "meeting_tag_links_select_accessible_meeting"
+on public.meeting_tag_links for select
+using (public.can_access_meeting(meeting_id));
+
+drop policy if exists "meeting_tag_links_insert_accessible_meeting" on public.meeting_tag_links;
+create policy "meeting_tag_links_insert_accessible_meeting"
+on public.meeting_tag_links for insert
+with check (public.can_access_meeting(meeting_id));
+
+drop policy if exists "meeting_tag_links_delete_accessible_meeting" on public.meeting_tag_links;
+create policy "meeting_tag_links_delete_accessible_meeting"
+on public.meeting_tag_links for delete
+using (public.can_access_meeting(meeting_id));
+
 drop policy if exists "meeting_sessions_select_workspace_member" on public.meeting_sessions;
 create policy "meeting_sessions_select_workspace_member"
 on public.meeting_sessions for select
@@ -367,8 +482,29 @@ grant select, insert, update, delete on public.workspace_members to authenticate
 grant select, insert, update on public.workspace_invites to authenticated;
 grant select, insert, update, delete on public.meetings to authenticated;
 grant select, insert, update, delete on public.action_items to authenticated;
+grant select, insert, update, delete on public.comments to authenticated;
+grant select, insert, delete on public.meeting_tags to authenticated;
+grant select, insert, delete on public.meeting_tag_links to authenticated;
 grant select, insert, update on public.meeting_sessions to authenticated;
 
 grant execute on function public.is_workspace_member(uuid) to authenticated;
 grant execute on function public.is_workspace_admin(uuid) to authenticated;
 grant execute on function public.can_access_meeting(uuid) to authenticated;
+grant execute on function public.is_workspace_owner(uuid) to authenticated;
+
+grant usage on schema public to service_role;
+grant select, insert, update, delete on public.profiles to service_role;
+grant select, insert, update, delete on public.workspaces to service_role;
+grant select, insert, update, delete on public.workspace_members to service_role;
+grant select, insert, update, delete on public.workspace_invites to service_role;
+grant select, insert, update, delete on public.meetings to service_role;
+grant select, insert, update, delete on public.action_items to service_role;
+grant select, insert, update, delete on public.comments to service_role;
+grant select, insert, update, delete on public.meeting_tags to service_role;
+grant select, insert, update, delete on public.meeting_tag_links to service_role;
+grant select, insert, update, delete on public.meeting_sessions to service_role;
+
+grant execute on function public.is_workspace_member(uuid) to service_role;
+grant execute on function public.is_workspace_admin(uuid) to service_role;
+grant execute on function public.can_access_meeting(uuid) to service_role;
+grant execute on function public.is_workspace_owner(uuid) to service_role;

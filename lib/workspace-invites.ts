@@ -1,6 +1,6 @@
 import "server-only";
 import type { WorkspaceInvite, WorkspaceMember } from "@/lib/types";
-import { createSupabaseServerClient } from "@/lib/supabase/server";
+import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 type InviteRow = {
   id: string;
@@ -20,7 +20,12 @@ type MemberRow = {
   user_id: string;
   role: "owner" | "admin" | "member";
   created_at: string;
-  profiles?: { email: string | null; full_name: string | null } | null;
+};
+
+type ProfileRow = {
+  id: string;
+  email: string | null;
+  full_name: string | null;
 };
 
 function mapInvite(row: InviteRow): WorkspaceInvite {
@@ -41,7 +46,7 @@ export async function getWorkspaceMembers(workspaceId: string) {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("workspace_members")
-    .select("*, profiles(email, full_name)")
+    .select("*")
     .eq("workspace_id", workspaceId)
     .order("created_at", { ascending: true });
 
@@ -49,15 +54,36 @@ export async function getWorkspaceMembers(workspaceId: string) {
     throw new Error(error.message);
   }
 
-  return ((data ?? []) as MemberRow[]).map((member) => ({
+  const members = (data ?? []) as MemberRow[];
+  const userIds = [...new Set(members.map((member) => member.user_id))];
+  const profilesById = new Map<string, ProfileRow>();
+
+  if (userIds.length > 0) {
+    const admin = createSupabaseAdminClient();
+    const { data: profiles, error: profileError } = await admin
+      .from("profiles")
+      .select("id, email, full_name")
+      .in("id", userIds);
+
+    if (!profileError) {
+      for (const profile of (profiles ?? []) as ProfileRow[]) {
+        profilesById.set(profile.id, profile);
+      }
+    }
+  }
+
+  return members.map((member) => {
+    const profile = profilesById.get(member.user_id);
+    return {
     id: member.id,
     workspaceId: member.workspace_id,
     userId: member.user_id,
     role: member.role,
     createdAt: member.created_at,
-    email: member.profiles?.email ?? null,
-    fullName: member.profiles?.full_name ?? null
-  }));
+      email: profile?.email ?? null,
+      fullName: profile?.full_name ?? null
+    };
+  });
 }
 
 export async function getWorkspaceInvites(workspaceId: string): Promise<WorkspaceInvite[]> {

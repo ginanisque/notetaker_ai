@@ -5,13 +5,17 @@ export interface ActionItem {
   owner: string;
   deadline: string;
   ownerEmail?: string | null;
-  status?: "open" | "done";
+  assignedUserId?: string | null;
+  meetingTitle?: string;
+  meetingDate?: string;
+  status?: "open" | "in_progress" | "done";
 }
 
 export interface PersistedActionItem extends ActionItem {
   id: string;
   meetingId: string;
   createdAt: string;
+  updatedAt?: string;
 }
 
 export interface MeetingSummary {
@@ -38,6 +42,8 @@ export interface MeetingRecord {
   audioFileName?: string;
   audioUrl?: string | null;
   actionItems?: PersistedActionItem[];
+  comments?: MeetingComment[];
+  tags?: MeetingTag[];
   createdAt?: string;
 }
 
@@ -66,6 +72,8 @@ export interface WorkspaceMember {
   userId: string;
   role: "owner" | "admin" | "member";
   createdAt: string;
+  email?: string | null;
+  fullName?: string | null;
 }
 
 export interface WorkspaceInvite {
@@ -78,6 +86,24 @@ export interface WorkspaceInvite {
   status: "pending" | "accepted" | "revoked";
   createdAt: string;
   acceptedAt: string | null;
+}
+
+export interface MeetingComment {
+  id: string;
+  meetingId: string;
+  userId: string;
+  authorName: string | null;
+  authorEmail: string | null;
+  body: string;
+  createdAt: string;
+  updatedAt: string;
+}
+
+export interface MeetingTag {
+  id: string;
+  workspaceId: string | null;
+  name: string;
+  createdAt: string;
 }
 
 export interface MeetingSession {
