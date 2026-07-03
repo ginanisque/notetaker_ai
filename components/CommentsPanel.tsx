@@ -1,8 +1,9 @@
 "use client";
 
 import { MessageSquare, Trash2 } from "lucide-react";
-import { useState, type FormEvent } from "react";
+import { useEffect, useState, type FormEvent } from "react";
 import StatusMessage from "@/components/StatusMessage";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { MeetingComment } from "@/lib/types";
 import { formatDate } from "@/lib/utils";
 
@@ -10,6 +11,31 @@ export default function CommentsPanel({ meetingId, comments }: { meetingId: stri
   const [rows, setRows] = useState(comments);
   const [body, setBody] = useState("");
   const [error, setError] = useState("");
+
+  async function refreshComments() {
+    const response = await fetch(`/api/comments?meetingId=${meetingId}`, { cache: "no-store" });
+    if (!response.ok) return;
+    setRows((await response.json()) as MeetingComment[]);
+  }
+
+  useEffect(() => {
+    const supabase = createSupabaseBrowserClient();
+    const channel = supabase
+      .channel(`comments-${meetingId}`)
+      .on(
+        "postgres_changes",
+        { event: "*", schema: "public", table: "comments", filter: `meeting_id=eq.${meetingId}` },
+        () => {
+          void refreshComments();
+        }
+      )
+      .subscribe();
+
+    return () => {
+      void supabase.removeChannel(channel);
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [meetingId]);
 
   async function addComment(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -26,7 +52,8 @@ export default function CommentsPanel({ meetingId, comments }: { meetingId: stri
       setError(json.error || "Unable to add comment.");
       return;
     }
-    window.location.reload();
+    setBody("");
+    await refreshComments();
   }
 
   async function deleteComment(id: string) {
@@ -52,7 +79,9 @@ export default function CommentsPanel({ meetingId, comments }: { meetingId: stri
           rows={3}
           className="w-full resize-none rounded-md border border-line bg-white px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
-        <button className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white">Add comment</button>
+        <button type="submit" className="rounded-md bg-accent px-4 py-2 text-sm font-semibold text-white">
+          Add comment
+        </button>
       </form>
       {rows.length > 0 ? (
         <div className="space-y-3">
@@ -66,6 +95,7 @@ export default function CommentsPanel({ meetingId, comments }: { meetingId: stri
                 <button
                   type="button"
                   onClick={() => void deleteComment(comment.id)}
+                  aria-label="Delete comment"
                   className="text-neutral-400 transition hover:text-red-700"
                 >
                   <Trash2 className="h-4 w-4" aria-hidden />

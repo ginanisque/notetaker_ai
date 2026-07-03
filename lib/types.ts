@@ -41,6 +41,7 @@ export interface MeetingRecord {
   summary: MeetingSummary;
   audioFileName?: string;
   audioUrl?: string | null;
+  deletedAt?: string | null;
   actionItems?: PersistedActionItem[];
   comments?: MeetingComment[];
   tags?: MeetingTag[];

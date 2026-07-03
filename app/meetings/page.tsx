@@ -44,31 +44,7 @@ export default async function MeetingsPage({
         </Link>
       }
     >
-        <section className="mt-8 grid gap-4 lg:grid-cols-[1fr_20rem]">
-          <div className="surface rounded-md p-4">
-            <p className="text-sm font-semibold text-ink">View</p>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Link
-                href="/meetings"
-                className={`rounded-md border px-3 py-2 text-sm font-medium ${
-                  !workspaceId ? "border-accent bg-accent text-white" : "border-line bg-white text-ink"
-                }`}
-              >
-                All accessible
-              </Link>
-              {workspaces.map((workspace) => (
-                <Link
-                  key={workspace.id}
-                  href={`/meetings?workspaceId=${workspace.id}`}
-                  className={`rounded-md border px-3 py-2 text-sm font-medium ${
-                    workspaceId === workspace.id ? "border-accent bg-accent text-white" : "border-line bg-white text-ink"
-                  }`}
-                >
-                  {workspace.name}
-                </Link>
-              ))}
-            </div>
-          </div>
+        <section className="mt-8 max-w-xl">
           <WorkspaceCreateForm />
         </section>
 

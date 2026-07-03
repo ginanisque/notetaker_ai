@@ -69,8 +69,9 @@ export async function getWorkspaceActionItems(workspaceId: string): Promise<Acti
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
     .from("action_items")
-    .select("*, meetings!inner(id, title, date, workspace_id)")
+    .select("*, meetings!inner(id, title, date, workspace_id, deleted_at)")
     .eq("meetings.workspace_id", workspaceId)
+    .is("meetings.deleted_at", null)
     .order("created_at", { ascending: false });
 
   if (error) {

@@ -22,6 +22,7 @@ RESEND_API_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID=
+CRON_SECRET=
 ```
 
 3. In Supabase, run the SQL files in `supabase/migrations/` in order.
@@ -54,7 +55,8 @@ It also enables Row Level Security so users can only access their personal meeti
 
 Additional migrations add meeting-session coordination, duplicate merge support, and workspace invite links.
 Later migrations add direct member management, comments, tags, and richer action item editing.
-The most recent migrations (`007`-`010`) add Stripe billing columns, monthly usage tracking, API rate limiting, and a private Storage bucket for recorded audio.
+Migrations `007`-`010` add Stripe billing columns, monthly usage tracking, API rate limiting, and a private Storage bucket for recorded audio.
+Migration `011` adds a 30-day trash for meetings.
 
 ## Billing, usage, and rate limiting
 
@@ -72,6 +74,16 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 
 Copy the signing secret it prints into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
+
+## Meeting trash
+
+- The meeting owner can move a meeting to trash from its detail page; it's excluded from the meeting list, workspace dashboards, and duplicate detection, but the owner can still open it directly to review or restore it.
+- Trashed meetings are permanently deleted 30 days after being trashed. A daily Vercel Cron job (`vercel.json`, `/api/cron/purge-trash`) does the actual purge — set `CRON_SECRET` as a project env var in Vercel and Vercel will automatically send it as the `Authorization: Bearer` header on each cron invocation.
+- Locally, there's no cron running — trigger a purge manually with:
+
+```bash
+curl -H "Authorization: Bearer <your CRON_SECRET>" http://localhost:3000/api/cron/purge-trash
+```
 
 ## Team Workflow
 
@@ -104,11 +116,12 @@ RESEND_API_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID=
+CRON_SECRET=
 ```
 
 4. In Stripe, create a webhook endpoint pointing at `https://<your-domain>/api/stripe/webhook` listening for `checkout.session.completed`, `customer.subscription.updated`, and `customer.subscription.deleted`, then copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
 
-5. Deploy.
+5. Deploy. Vercel will pick up `vercel.json` and start running the daily trash-purge cron automatically once `CRON_SECRET` is set.
 
 The OpenAI key, Stripe secret key, Resend key, and Supabase service role key are only used server-side. Do not expose them in client components.
 

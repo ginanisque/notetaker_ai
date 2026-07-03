@@ -41,6 +41,7 @@ type MeetingRow = {
   transcript: string;
   summary_json: unknown;
   audio_url: string | null;
+  deleted_at: string | null;
   meeting_session_id: string | null;
   merged_from: string[];
   created_at: string;
@@ -147,6 +148,7 @@ function mapMeeting(row: MeetingRow): MeetingRecord {
     transcript: row.transcript,
     summary,
     audioUrl: row.audio_url,
+    deletedAt: row.deleted_at,
     actionItems: row.action_items?.map(mapActionItem) ?? [],
     comments: row.comments?.map(mapComment) ?? [],
     tags: row.meeting_tag_links?.map((link) => link.meeting_tags).filter((tag): tag is TagRow => Boolean(tag)).map(mapTag) ?? [],
@@ -236,6 +238,11 @@ async function getCommentsByMeetingId(meetingId: string) {
   }));
 }
 
+export async function getCommentsForMeeting(meetingId: string) {
+  const comments = await getCommentsByMeetingId(meetingId);
+  return comments.map(mapComment);
+}
+
 export async function getWorkspaces(): Promise<Workspace[]> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.from("workspaces").select("*").order("created_at", { ascending: true });
@@ -276,6 +283,7 @@ export async function getMeetings(workspaceId?: string | null): Promise<MeetingR
   let query = supabase
     .from("meetings")
     .select("*, workspaces(name), action_items(*)")
+    .is("deleted_at", null)
     .order("date", { ascending: false });
 
   if (workspaceId) {
@@ -314,13 +322,71 @@ export async function getMeetingById(id: string): Promise<MeetingRecord | null> 
     throw new Error(error.message);
   }
 
+  const row = data as MeetingRow;
+
+  if (row.deleted_at) {
+    const {
+      data: { user }
+    } = await supabase.auth.getUser();
+
+    if (!user || user.id !== row.owner_id) {
+      return null;
+    }
+  }
+
   const [tagLinksByMeetingId, comments] = await Promise.all([getTagLinksByMeetingIds([id]), getCommentsByMeetingId(id)]);
 
   return mapMeeting({
-    ...(data as MeetingRow),
+    ...row,
     comments,
     meeting_tag_links: tagLinksByMeetingId.get(id) ?? []
   });
+}
+
+export async function getTrashedMeetings(): Promise<MeetingRecord[]> {
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user }
+  } = await supabase.auth.getUser();
+
+  if (!user) {
+    return [];
+  }
+
+  const { data, error } = await supabase
+    .from("meetings")
+    .select("*, workspaces(name), action_items(*)")
+    .eq("owner_id", user.id)
+    .not("deleted_at", "is", null)
+    .order("deleted_at", { ascending: false });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return ((data ?? []) as MeetingRow[]).map((row) => mapMeeting({ ...row, meeting_tag_links: [] }));
+}
+
+export async function softDeleteMeeting(id: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("soft_delete_meeting", { p_meeting_id: id });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return Boolean(data);
+}
+
+export async function restoreMeeting(id: string): Promise<boolean> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("restore_meeting", { p_meeting_id: id });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  return Boolean(data);
 }
 
 export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecord> {
@@ -393,6 +459,7 @@ export async function findDuplicateMeetings(meeting: MeetingRecord): Promise<Dup
     .from("meetings")
     .select("id, title, date, summary_json")
     .neq("id", meeting.id)
+    .is("deleted_at", null)
     .gte("date", from)
     .lte("date", to)
     .order("date", { ascending: false });

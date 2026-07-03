@@ -131,6 +131,10 @@ export async function POST(request: Request) {
       return NextResponse.json({ error: "One or both meetings were not found." }, { status: 404 });
     }
 
+    if (primary.deletedAt || duplicate.deletedAt) {
+      return NextResponse.json({ error: "A trashed meeting cannot be merged." }, { status: 400 });
+    }
+
     const summary = await summarizeMergedTranscripts(primary.title, primary.transcript, duplicate.transcript);
     const mergedMeeting = await createMergedMeeting(primary, duplicate, summary);
 
