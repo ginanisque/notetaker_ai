@@ -1,5 +1,12 @@
 import "server-only";
-import type { ActionItem, MeetingRecord, SaveMeetingInput, Workspace } from "@/lib/types";
+import type {
+  ActionItem,
+  DuplicateMeetingCandidate,
+  MeetingRecord,
+  MeetingSummary,
+  SaveMeetingInput,
+  Workspace
+} from "@/lib/types";
 import { isMeetingSummary } from "@/lib/validation";
 import { createSupabaseServerClient } from "@/lib/supabase/server";
 
@@ -18,6 +25,7 @@ type WorkspaceRow = {
   id: string;
   name: string;
   owner_id: string;
+  recording_policy: "single_recorder" | "open";
   created_at: string;
 };
 
@@ -30,6 +38,8 @@ type MeetingRow = {
   transcript: string;
   summary_json: unknown;
   audio_url: string | null;
+  meeting_session_id: string | null;
+  merged_from: string[];
   created_at: string;
   workspaces?: { name: string } | null;
   action_items?: ActionItemRow[];
@@ -53,6 +63,7 @@ function mapWorkspace(row: WorkspaceRow): Workspace {
     id: row.id,
     name: row.name,
     ownerId: row.owner_id,
+    recordingPolicy: row.recording_policy,
     createdAt: row.created_at
   };
 }
@@ -75,6 +86,8 @@ function mapMeeting(row: MeetingRow): MeetingRecord {
     ownerId: row.owner_id,
     workspaceId: row.workspace_id,
     workspaceName: row.workspaces?.name ?? null,
+    meetingSessionId: row.meeting_session_id,
+    mergedFrom: row.merged_from ?? [],
     title: row.title,
     date: row.date,
     transcript: row.transcript,
@@ -173,6 +186,7 @@ export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecor
     .from("meetings")
     .insert({
       workspace_id: input.workspaceId || null,
+      meeting_session_id: input.meetingSessionId || null,
       owner_id: user.id,
       title: input.title,
       date: input.date,
@@ -207,6 +221,120 @@ export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecor
   const savedMeeting = await getMeetingById(meeting.id);
   if (!savedMeeting) {
     throw new Error("Meeting was saved but could not be loaded.");
+  }
+
+  return savedMeeting;
+}
+
+function normalizedTitle(value: string) {
+  return value.trim().toLowerCase().replace(/\s+/g, " ");
+}
+
+export async function findDuplicateMeetings(meeting: MeetingRecord): Promise<DuplicateMeetingCandidate[]> {
+  const supabase = await createSupabaseServerClient();
+  const meetingDate = new Date(meeting.date);
+  const from = new Date(meetingDate.getTime() - 2 * 60 * 60 * 1000).toISOString();
+  const to = new Date(meetingDate.getTime() + 2 * 60 * 60 * 1000).toISOString();
+
+  let query = supabase
+    .from("meetings")
+    .select("id, title, date, summary_json")
+    .neq("id", meeting.id)
+    .gte("date", from)
+    .lte("date", to)
+    .order("date", { ascending: false });
+
+  if (meeting.workspaceId) {
+    query = query.eq("workspace_id", meeting.workspaceId);
+  } else {
+    query = query.is("workspace_id", null);
+  }
+
+  const { data, error } = await query;
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const title = normalizedTitle(meeting.title);
+  return ((data ?? []) as Array<{ id: string; title: string; date: string; summary_json: unknown }>)
+    .filter((candidate) => {
+      const candidateTitle = normalizedTitle(candidate.title);
+      return candidateTitle === title || candidateTitle.includes(title) || title.includes(candidateTitle);
+    })
+    .map((candidate) => ({
+      id: candidate.id,
+      title: candidate.title,
+      date: candidate.date,
+      shortSummary: isMeetingSummary(candidate.summary_json)
+        ? candidate.summary_json.shortSummary
+        : "Potential duplicate meeting."
+    }));
+}
+
+export async function createMergedMeeting(
+  primary: MeetingRecord,
+  secondary: MeetingRecord,
+  summary: MeetingSummary
+): Promise<MeetingRecord> {
+  const mergedTranscript = [
+    `Transcript from ${primary.title}`,
+    primary.transcript,
+    "",
+    `Transcript from ${secondary.title}`,
+    secondary.transcript
+  ].join("\n");
+
+  const supabase = await createSupabaseServerClient();
+  const {
+    data: { user },
+    error: authError
+  } = await supabase.auth.getUser();
+
+  if (authError || !user) {
+    throw new Error("You must be signed in to merge meetings.");
+  }
+
+  const { data: meeting, error: meetingError } = await supabase
+    .from("meetings")
+    .insert({
+      workspace_id: primary.workspaceId || secondary.workspaceId || null,
+      owner_id: user.id,
+      title: summary.meetingTitle || `Merged: ${primary.title}`,
+      date: new Date().toISOString(),
+      transcript: mergedTranscript,
+      summary_json: summary,
+      audio_url: null,
+      meeting_session_id: primary.meetingSessionId || secondary.meetingSessionId || null,
+      merged_from: [primary.id, secondary.id]
+    })
+    .select("*")
+    .single();
+
+  if (meetingError) {
+    throw new Error(meetingError.message);
+  }
+
+  const actionItems = summary.actionItems.map((item: ActionItem) => ({
+    meeting_id: meeting.id,
+    task: item.task,
+    owner_name: item.owner || "Not specified",
+    owner_email: item.ownerEmail ?? null,
+    deadline: item.deadline || "Not specified",
+    status: item.status ?? "open"
+  }));
+
+  if (actionItems.length > 0) {
+    const { error: actionError } = await supabase.from("action_items").insert(actionItems);
+
+    if (actionError) {
+      throw new Error(actionError.message);
+    }
+  }
+
+  const savedMeeting = await getMeetingById(meeting.id);
+  if (!savedMeeting) {
+    throw new Error("Merged meeting was saved but could not be loaded.");
   }
 
   return savedMeeting;

@@ -33,7 +33,7 @@ export default function ActionItemsTable({ items }: { items: ActionItem[] }) {
 
   return (
     <div className="space-y-2">
-      <div className="overflow-hidden rounded-md border border-line bg-white">
+      <div className="overflow-hidden rounded-md border border-line bg-white/90 shadow-sm">
         <table className="w-full border-collapse text-left text-sm">
           <thead className="bg-[#ece7db] text-xs uppercase tracking-wide text-neutral-700">
             <tr>

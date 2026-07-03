@@ -1,8 +1,9 @@
 import ActionItemsTable from "@/components/ActionItemsTable";
 import CopyButton from "@/components/CopyButton";
+import DownloadNotesButton from "@/components/DownloadNotesButton";
 import EmailButton from "@/components/EmailButton";
 import type { MeetingRecord } from "@/lib/types";
-import { notesToText } from "@/lib/utils";
+import { notesToText, safeFileName } from "@/lib/utils";
 
 function ListSection({ title, items }: { title: string; items: string[] }) {
   return (
@@ -11,7 +12,7 @@ function ListSection({ title, items }: { title: string; items: string[] }) {
       {items.length > 0 ? (
         <ul className="space-y-2 text-sm leading-6 text-neutral-700">
           {items.map((item, index) => (
-            <li key={`${title}-${index}`} className="rounded-md border border-line bg-white px-4 py-3">
+            <li key={`${title}-${index}`} className="rounded-md border border-line bg-white/90 px-4 py-3 shadow-sm">
               {item}
             </li>
           ))}
@@ -34,8 +35,9 @@ export default function MeetingSummary({ meeting }: { meeting: MeetingRecord }) 
           <CopyButton text={notesText} label="Copy notes" />
           <CopyButton text={meeting.summary.followUpEmail} label="Copy email" />
           <EmailButton subject={`Follow-up: ${meeting.title}`} body={meeting.summary.followUpEmail} />
+          <DownloadNotesButton filename={`${safeFileName(meeting.title) || "meeting-notes"}.md`} text={notesText} />
         </div>
-        <div className="rounded-md border border-line bg-white p-5">
+        <div className="surface rounded-md p-5">
           <h2 className="text-lg font-semibold text-ink">Short summary</h2>
           <p className="mt-3 leading-7 text-neutral-700">{meeting.summary.shortSummary}</p>
         </div>
@@ -53,14 +55,14 @@ export default function MeetingSummary({ meeting }: { meeting: MeetingRecord }) 
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-ink">Follow-up email</h2>
-        <pre className="whitespace-pre-wrap rounded-md border border-line bg-white p-5 text-sm leading-6 text-neutral-800">
+        <pre className="whitespace-pre-wrap rounded-md border border-line bg-white/90 p-5 text-sm leading-6 text-neutral-800 shadow-sm">
           {meeting.summary.followUpEmail}
         </pre>
       </section>
 
       <section className="space-y-3">
         <h2 className="text-lg font-semibold text-ink">Full transcript</h2>
-        <pre className="max-h-[34rem] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-white p-5 text-sm leading-6 text-neutral-800">
+        <pre className="max-h-[34rem] overflow-auto whitespace-pre-wrap rounded-md border border-line bg-white/90 p-5 text-sm leading-6 text-neutral-800 shadow-sm">
           {meeting.transcript}
         </pre>
       </section>

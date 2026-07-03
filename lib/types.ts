@@ -29,6 +29,8 @@ export interface MeetingRecord {
   ownerId?: string;
   workspaceId?: string | null;
   workspaceName?: string | null;
+  meetingSessionId?: string | null;
+  mergedFrom?: string[];
   title: string;
   date: string;
   transcript: string;
@@ -42,6 +44,7 @@ export interface MeetingRecord {
 export interface SaveMeetingInput {
   title: string;
   workspaceId?: string | null;
+  meetingSessionId?: string | null;
   date: string;
   transcript: string;
   summary: MeetingSummary;
@@ -53,6 +56,7 @@ export interface Workspace {
   id: string;
   name: string;
   ownerId: string;
+  recordingPolicy: "single_recorder" | "open";
   createdAt: string;
 }
 
@@ -62,4 +66,34 @@ export interface WorkspaceMember {
   userId: string;
   role: "owner" | "admin" | "member";
   createdAt: string;
+}
+
+export interface WorkspaceInvite {
+  id: string;
+  workspaceId: string;
+  workspaceName?: string | null;
+  invitedEmail: string;
+  role: "admin" | "member";
+  invitedBy: string;
+  status: "pending" | "accepted" | "revoked";
+  createdAt: string;
+  acceptedAt: string | null;
+}
+
+export interface MeetingSession {
+  id: string;
+  workspaceId: string;
+  hostId: string;
+  hostEmail?: string | null;
+  title: string | null;
+  status: "active" | "ended";
+  startedAt: string;
+  endedAt: string | null;
+}
+
+export interface DuplicateMeetingCandidate {
+  id: string;
+  title: string;
+  date: string;
+  shortSummary: string;
 }

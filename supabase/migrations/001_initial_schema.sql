@@ -11,6 +11,7 @@ create table if not exists public.workspaces (
   id uuid primary key default gen_random_uuid(),
   name text not null,
   owner_id uuid not null references auth.users(id) on delete cascade,
+  recording_policy text not null default 'single_recorder' check (recording_policy in ('single_recorder', 'open')),
   created_at timestamp with time zone not null default now()
 );
 
@@ -23,6 +24,18 @@ create table if not exists public.workspace_members (
   unique (workspace_id, user_id)
 );
 
+create table if not exists public.workspace_invites (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  invited_email text not null,
+  role text not null default 'member' check (role in ('admin', 'member')),
+  invited_by uuid not null references auth.users(id) on delete cascade,
+  status text not null default 'pending' check (status in ('pending', 'accepted', 'revoked')),
+  created_at timestamp with time zone not null default now(),
+  accepted_at timestamp with time zone,
+  unique (workspace_id, invited_email)
+);
+
 create table if not exists public.meetings (
   id uuid primary key default gen_random_uuid(),
   workspace_id uuid references public.workspaces(id) on delete set null,
@@ -32,8 +45,24 @@ create table if not exists public.meetings (
   transcript text not null,
   summary_json jsonb not null,
   audio_url text,
+  meeting_session_id uuid,
+  merged_from uuid[] not null default '{}',
   created_at timestamp with time zone not null default now()
 );
+
+create table if not exists public.meeting_sessions (
+  id uuid primary key default gen_random_uuid(),
+  workspace_id uuid not null references public.workspaces(id) on delete cascade,
+  host_id uuid not null references auth.users(id) on delete cascade,
+  title text,
+  status text not null default 'active' check (status in ('active', 'ended')),
+  started_at timestamp with time zone not null default now(),
+  ended_at timestamp with time zone
+);
+
+alter table public.meetings
+add constraint meetings_meeting_session_id_fkey
+foreign key (meeting_session_id) references public.meeting_sessions(id) on delete set null;
 
 create table if not exists public.action_items (
   id uuid primary key default gen_random_uuid(),
@@ -48,10 +77,14 @@ create table if not exists public.action_items (
 
 create index if not exists workspace_members_workspace_id_idx on public.workspace_members(workspace_id);
 create index if not exists workspace_members_user_id_idx on public.workspace_members(user_id);
+create index if not exists workspace_invites_workspace_id_idx on public.workspace_invites(workspace_id);
+create index if not exists workspace_invites_invited_email_idx on public.workspace_invites(lower(invited_email));
 create index if not exists meetings_owner_id_idx on public.meetings(owner_id);
 create index if not exists meetings_workspace_id_idx on public.meetings(workspace_id);
 create index if not exists action_items_meeting_id_idx on public.action_items(meeting_id);
 create index if not exists action_items_owner_email_idx on public.action_items(owner_email);
+create index if not exists meeting_sessions_workspace_status_idx on public.meeting_sessions(workspace_id, status);
+create index if not exists meetings_meeting_session_id_idx on public.meetings(meeting_session_id);
 
 create or replace function public.handle_new_user()
 returns trigger
@@ -154,8 +187,10 @@ $$;
 alter table public.profiles enable row level security;
 alter table public.workspaces enable row level security;
 alter table public.workspace_members enable row level security;
+alter table public.workspace_invites enable row level security;
 alter table public.meetings enable row level security;
 alter table public.action_items enable row level security;
+alter table public.meeting_sessions enable row level security;
 
 drop policy if exists "profiles_select_own" on public.profiles;
 create policy "profiles_select_own"
@@ -209,6 +244,31 @@ drop policy if exists "workspace_members_delete_admin" on public.workspace_membe
 create policy "workspace_members_delete_admin"
 on public.workspace_members for delete
 using (public.is_workspace_admin(workspace_id));
+
+drop policy if exists "workspace_invites_select_related" on public.workspace_invites;
+create policy "workspace_invites_select_related"
+on public.workspace_invites for select
+using (
+  public.is_workspace_admin(workspace_id)
+  or lower(invited_email) = lower(auth.jwt()->>'email')
+);
+
+drop policy if exists "workspace_invites_insert_admin" on public.workspace_invites;
+create policy "workspace_invites_insert_admin"
+on public.workspace_invites for insert
+with check (public.is_workspace_admin(workspace_id) and invited_by = auth.uid());
+
+drop policy if exists "workspace_invites_update_admin_or_invitee" on public.workspace_invites;
+create policy "workspace_invites_update_admin_or_invitee"
+on public.workspace_invites for update
+using (
+  public.is_workspace_admin(workspace_id)
+  or lower(invited_email) = lower(auth.jwt()->>'email')
+)
+with check (
+  public.is_workspace_admin(workspace_id)
+  or lower(invited_email) = lower(auth.jwt()->>'email')
+);
 
 drop policy if exists "meetings_select_owner_or_workspace" on public.meetings;
 create policy "meetings_select_owner_or_workspace"
@@ -282,3 +342,33 @@ using (
       )
   )
 );
+
+drop policy if exists "meeting_sessions_select_workspace_member" on public.meeting_sessions;
+create policy "meeting_sessions_select_workspace_member"
+on public.meeting_sessions for select
+using (public.is_workspace_member(workspace_id));
+
+drop policy if exists "meeting_sessions_insert_workspace_member" on public.meeting_sessions;
+create policy "meeting_sessions_insert_workspace_member"
+on public.meeting_sessions for insert
+with check (host_id = auth.uid() and public.is_workspace_member(workspace_id));
+
+drop policy if exists "meeting_sessions_update_host_or_admin" on public.meeting_sessions;
+create policy "meeting_sessions_update_host_or_admin"
+on public.meeting_sessions for update
+using (host_id = auth.uid() or public.is_workspace_admin(workspace_id))
+with check (host_id = auth.uid() or public.is_workspace_admin(workspace_id));
+
+grant usage on schema public to authenticated;
+
+grant select, update on public.profiles to authenticated;
+grant select, insert, update, delete on public.workspaces to authenticated;
+grant select, insert, update, delete on public.workspace_members to authenticated;
+grant select, insert, update on public.workspace_invites to authenticated;
+grant select, insert, update, delete on public.meetings to authenticated;
+grant select, insert, update, delete on public.action_items to authenticated;
+grant select, insert, update on public.meeting_sessions to authenticated;
+
+grant execute on function public.is_workspace_member(uuid) to authenticated;
+grant execute on function public.is_workspace_admin(uuid) to authenticated;
+grant execute on function public.can_access_meeting(uuid) to authenticated;

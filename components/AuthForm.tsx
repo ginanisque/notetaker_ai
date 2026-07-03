@@ -43,6 +43,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
 
         if (loginError) throw loginError;
 
+        await fetch("/api/auth/session", { cache: "no-store" });
         router.push("/meetings");
         router.refresh();
       }
@@ -54,7 +55,7 @@ export default function AuthForm({ mode }: { mode: "login" | "signup" }) {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-5 rounded-md border border-line bg-white p-6 shadow-sm">
+    <form onSubmit={handleSubmit} className="space-y-5 rounded-md bg-white p-6">
       {isSignup ? (
         <div className="space-y-2">
           <label htmlFor="fullName" className="text-sm font-semibold text-ink">

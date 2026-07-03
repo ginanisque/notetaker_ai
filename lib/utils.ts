@@ -44,3 +44,12 @@ export function notesToText(summary: MeetingSummary, transcript: string) {
     transcript
   ].join("\n");
 }
+
+export function safeFileName(value: string) {
+  return value
+    .trim()
+    .toLowerCase()
+    .replace(/[^a-z0-9]+/g, "-")
+    .replace(/^-+|-+$/g, "")
+    .slice(0, 80);
+}

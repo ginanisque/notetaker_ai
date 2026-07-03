@@ -44,7 +44,7 @@ export default function WorkspaceCreateForm() {
   }
 
   return (
-    <form onSubmit={handleSubmit} className="space-y-3 rounded-md border border-line bg-white p-4">
+    <form onSubmit={handleSubmit} className="surface space-y-3 rounded-md p-4">
       <label htmlFor="workspaceName" className="text-sm font-semibold text-ink">
         New workspace
       </label>
@@ -54,7 +54,7 @@ export default function WorkspaceCreateForm() {
           value={name}
           onChange={(event) => setName(event.target.value)}
           placeholder="Team or client name"
-          className="min-w-0 flex-1 rounded-md border border-line bg-white px-3 py-2 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
+          className="min-w-0 flex-1 rounded-md border border-line bg-white px-3 py-2.5 outline-none transition focus:border-accent focus:ring-2 focus:ring-accent/20"
         />
         <button
           type="submit"

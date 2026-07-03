@@ -1,10 +1,10 @@
 "use client";
 
-import { Mic, Square, Upload } from "lucide-react";
+import { Mic, Radio, Square, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import StatusMessage from "@/components/StatusMessage";
-import type { MeetingRecord, MeetingSummary, SaveMeetingInput, Workspace } from "@/lib/types";
+import type { MeetingRecord, MeetingSession, MeetingSummary, SaveMeetingInput, Workspace } from "@/lib/types";
 
 type ProcessingStep = "idle" | "recording" | "transcribing" | "summarizing" | "saving" | "complete";
 
@@ -16,10 +16,20 @@ function formatTimer(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
-export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
+export default function Recorder({
+  workspaces,
+  initialWorkspaceId = ""
+}: {
+  workspaces: Workspace[];
+  initialWorkspaceId?: string;
+}) {
   const router = useRouter();
   const [meetingTitle, setMeetingTitle] = useState("");
-  const [workspaceId, setWorkspaceId] = useState("");
+  const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
+  const [activeSession, setActiveSession] = useState<MeetingSession | null>(null);
+  const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
+  const [canRecordInWorkspace, setCanRecordInWorkspace] = useState(true);
+  const [canTakeOver, setCanTakeOver] = useState(false);
   const [step, setStep] = useState<ProcessingStep>("idle");
   const [seconds, setSeconds] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
@@ -27,9 +37,11 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
+  const sessionIdRef = useRef<string | null>(null);
 
   const isRecording = step === "recording";
   const isProcessing = ["transcribing", "summarizing", "saving"].includes(step);
+  const selectedWorkspace = workspaces.find((workspace) => workspace.id === workspaceId);
 
   useEffect(() => {
     if (!isRecording) return;
@@ -45,12 +57,106 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
     };
   }, [audioUrl]);
 
+  useEffect(() => {
+    if (!workspaceId) {
+      setActiveSession(null);
+      setCanRecordInWorkspace(true);
+      setCanTakeOver(false);
+      return;
+    }
+
+    let isMounted = true;
+
+    async function loadActiveSession() {
+      try {
+        const response = await fetch(`/api/meeting-sessions?workspaceId=${workspaceId}`, { cache: "no-store" });
+        const body = (await response.json()) as {
+          activeSession?: MeetingSession | null;
+          canRecord?: boolean;
+          canTakeOver?: boolean;
+          error?: string;
+        };
+
+        if (!isMounted) return;
+
+        if (!response.ok) {
+          throw new Error(body.error || "Unable to check workspace recording status.");
+        }
+
+        setActiveSession(body.activeSession ?? null);
+        setCanRecordInWorkspace(Boolean(body.canRecord));
+        setCanTakeOver(Boolean(body.canTakeOver));
+      } catch (reason) {
+        if (!isMounted) return;
+        setError(reason instanceof Error ? reason.message : "Unable to check workspace recording status.");
+      }
+    }
+
+    void loadActiveSession();
+
+    const interval = window.setInterval(() => {
+      void loadActiveSession();
+    }, 15000);
+
+    return () => {
+      isMounted = false;
+      window.clearInterval(interval);
+    };
+  }, [workspaceId]);
+
+  async function startWorkspaceSession(takeOver = false) {
+    if (!workspaceId) return null;
+
+    const response = await fetch("/api/meeting-sessions", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        workspaceId,
+        title: meetingTitle.trim(),
+        takeOver
+      })
+    });
+    const body = (await response.json()) as MeetingSession | { error?: string };
+
+    if (!response.ok || "error" in body) {
+      throw new Error(("error" in body && body.error) || "Unable to start workspace recording session.");
+    }
+
+    const session = body as MeetingSession;
+    setActiveSession(session);
+    setCurrentSessionId(session.id);
+    sessionIdRef.current = session.id;
+    setCanRecordInWorkspace(true);
+    setCanTakeOver(false);
+    return session.id;
+  }
+
+  async function endWorkspaceSession(sessionId: string | null) {
+    if (!sessionId) return;
+
+    await fetch("/api/meeting-sessions", {
+      method: "PATCH",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ sessionId })
+    });
+
+    setCurrentSessionId(null);
+    sessionIdRef.current = null;
+    setActiveSession(null);
+  }
+
   async function startListening() {
     setError("");
     setSeconds(0);
     chunksRef.current = [];
 
     try {
+      if (workspaceId && !canRecordInWorkspace) {
+        throw new Error("Another team member is already recording in this workspace.");
+      }
+
+      const sessionId = await startWorkspaceSession(false);
+      setCurrentSessionId(sessionId);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
@@ -68,6 +174,7 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
       recorder.start();
       setStep("recording");
     } catch (reason) {
+      await endWorkspaceSession(sessionIdRef.current);
       setError(
         reason instanceof DOMException && reason.name === "NotAllowedError"
           ? "Microphone access was denied. Please allow microphone access and try again."
@@ -133,6 +240,7 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
       const meeting: SaveMeetingInput = {
         title,
         workspaceId: workspaceId || null,
+        meetingSessionId: sessionIdRef.current,
         date: new Date().toISOString(),
         transcript: transcribeJson.transcript,
         summary: { ...summary, meetingTitle: title },
@@ -155,6 +263,8 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Something went wrong while processing the meeting.");
       setStep("idle");
+    } finally {
+      await endWorkspaceSession(sessionIdRef.current);
     }
   }
 
@@ -169,6 +279,16 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
 
   return (
     <div className="space-y-6">
+      <div className="flex items-center justify-between rounded-md bg-ink px-5 py-4 text-white">
+        <div>
+          <p className="text-sm font-semibold text-white/65">Recorder status</p>
+          <p className="mt-1 text-lg font-semibold">{status}</p>
+        </div>
+        <div className="inline-flex h-11 w-11 items-center justify-center rounded-md bg-white/10">
+          <Radio className={`h-5 w-5 ${isRecording ? "animate-pulse text-red-300" : "text-white/80"}`} aria-hidden />
+        </div>
+      </div>
+
       <div className="space-y-2">
         <label htmlFor="meetingTitle" className="text-sm font-semibold text-ink">
           Meeting title
@@ -207,16 +327,42 @@ export default function Recorder({ workspaces }: { workspaces: Workspace[] }) {
         Please inform meeting participants that this meeting is being recorded and transcribed for note-taking purposes.
       </StatusMessage>
 
-      <div className="flex flex-col gap-4 rounded-md border border-line bg-white p-5 sm:flex-row sm:items-center sm:justify-between">
+      {workspaceId && activeSession && !canRecordInWorkspace ? (
+        <StatusMessage tone="error">
+          {selectedWorkspace?.name ?? "This workspace"} already has an active recorder. Start time:{" "}
+          {new Intl.DateTimeFormat("en", { timeStyle: "short" }).format(new Date(activeSession.startedAt))}.
+          {canTakeOver ? (
+            <button
+              type="button"
+              onClick={() => {
+                setError("");
+                void startWorkspaceSession(true).catch((reason) =>
+                  setError(reason instanceof Error ? reason.message : "Unable to take over recording.")
+                );
+              }}
+              className="ml-3 rounded-md bg-white px-3 py-1 text-sm font-semibold text-red-700"
+            >
+              Take over recorder role
+            </button>
+          ) : null}
+        </StatusMessage>
+      ) : workspaceId && activeSession ? (
+        <StatusMessage tone="success">
+          You are the active recorder for {selectedWorkspace?.name ?? "this workspace"}. Session ID:{" "}
+          {activeSession.id.slice(0, 8)}
+        </StatusMessage>
+      ) : null}
+
+      <div className="flex flex-col gap-4 rounded-md border border-line bg-white/90 p-5 shadow-sm sm:flex-row sm:items-center sm:justify-between">
         <div>
           <p className="text-sm font-medium text-neutral-600">Recording timer</p>
-          <p className="mt-1 text-4xl font-semibold tabular-nums text-ink">{formatTimer(seconds)}</p>
+          <p className="mt-1 text-5xl font-semibold tabular-nums text-ink">{formatTimer(seconds)}</p>
         </div>
         <div className="flex flex-wrap gap-3">
           <button
             type="button"
             onClick={startListening}
-            disabled={isRecording || isProcessing}
+            disabled={isRecording || isProcessing || (workspaceId ? !canRecordInWorkspace : false)}
             className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#1f5f55] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Mic className="h-5 w-5" aria-hidden />

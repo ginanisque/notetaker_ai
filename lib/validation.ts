@@ -55,6 +55,9 @@ export function isSaveMeetingInput(value: unknown): value is SaveMeetingInput {
     typeof value.title === "string" &&
     value.title.trim().length > 0 &&
     (value.workspaceId === undefined || value.workspaceId === null || typeof value.workspaceId === "string") &&
+    (value.meetingSessionId === undefined ||
+      value.meetingSessionId === null ||
+      typeof value.meetingSessionId === "string") &&
     typeof value.date === "string" &&
     !Number.isNaN(Date.parse(value.date)) &&
     typeof value.transcript === "string" &&

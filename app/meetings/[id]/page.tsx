@@ -1,10 +1,11 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { ArrowLeft } from "lucide-react";
-import LogoutButton from "@/components/LogoutButton";
+import AppShell from "@/components/AppShell";
+import DuplicateMeetings from "@/components/DuplicateMeetings";
 import MeetingSummary from "@/components/MeetingSummary";
 import { requireUser } from "@/lib/auth";
-import { getMeetingById } from "@/lib/meetings";
+import { findDuplicateMeetings, getMeetingById } from "@/lib/meetings";
 import { formatDate } from "@/lib/utils";
 
 export const dynamic = "force-dynamic";
@@ -18,28 +19,29 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
     notFound();
   }
 
+  const duplicateCandidates = meeting.mergedFrom?.length ? [] : await findDuplicateMeetings(meeting);
+
   return (
-    <main className="min-h-screen bg-paper px-6 py-10">
+    <AppShell
+      eyebrow={meeting.workspaceName ?? "Meeting"}
+      title={meeting.title}
+      description={formatDate(meeting.date)}
+      actions={
+        <Link
+          href="/meetings"
+          className="inline-flex items-center gap-2 rounded-md border border-line bg-white px-4 py-3 text-sm font-semibold text-ink shadow-sm transition hover:border-accent hover:text-accent"
+        >
+          <ArrowLeft className="h-4 w-4" aria-hidden />
+          Meetings
+        </Link>
+      }
+    >
       <div className="mx-auto max-w-5xl">
-        <div className="flex items-center justify-between gap-4">
-          <Link
-            href="/meetings"
-            className="inline-flex items-center gap-2 text-sm font-medium text-neutral-700 hover:text-accent"
-          >
-            <ArrowLeft className="h-4 w-4" aria-hidden />
-            Meetings
-          </Link>
-          <LogoutButton />
-        </div>
-        <header className="mt-8 border-b border-line pb-8">
-          <p className="text-sm font-medium text-neutral-600">{formatDate(meeting.date)}</p>
-          <h1 className="mt-3 text-4xl font-semibold tracking-tight text-ink">{meeting.title}</h1>
-          {meeting.workspaceName ? <p className="mt-3 text-sm text-neutral-600">{meeting.workspaceName}</p> : null}
-        </header>
         <section className="mt-8">
+          <DuplicateMeetings meeting={meeting} candidates={duplicateCandidates} />
           <MeetingSummary meeting={meeting} />
         </section>
       </div>
-    </main>
+    </AppShell>
   );
 }
