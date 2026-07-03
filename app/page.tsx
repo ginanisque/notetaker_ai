@@ -13,8 +13,8 @@ export default function HomePage() {
           </p>
           <h1 className="mt-6 text-5xl font-semibold tracking-tight text-ink sm:text-6xl">AI Meeting Note Taker</h1>
           <p className="mx-auto mt-6 max-w-2xl text-lg leading-8 text-neutral-700">
-            Record browser audio, transcribe it with OpenAI, generate structured notes, and save personal or workspace
-            meetings online.
+            Record browser audio, transcribe it automatically, generate structured notes, and save personal or
+            workspace meetings online.
           </p>
           <div className="mt-8 flex flex-wrap justify-center gap-3">
             <Link

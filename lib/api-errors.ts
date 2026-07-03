@@ -11,7 +11,7 @@ export function getApiErrorMessage(error: unknown, fallback: string) {
     error.message.toLowerCase().includes("connection error") ||
     causeCode === "UNABLE_TO_VERIFY_LEAF_SIGNATURE"
   ) {
-    return "OpenAI connection error. Node cannot verify the TLS certificate chain on this machine.";
+    return "A connection error occurred. Please try again in a moment.";
   }
 
   return error.message || fallback;
