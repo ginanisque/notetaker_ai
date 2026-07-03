@@ -2,6 +2,7 @@ import { NextResponse } from "next/server";
 import { getApiErrorMessage } from "@/lib/api-errors";
 import { getCurrentUser } from "@/lib/auth";
 import { getOpenAIClient } from "@/lib/openai";
+import { enforceRateLimit } from "@/lib/rate-limit";
 import type { MeetingSummary } from "@/lib/types";
 import { isMeetingSummary } from "@/lib/validation";
 
@@ -61,6 +62,14 @@ export async function POST(request: Request) {
     const user = await getCurrentUser();
     if (!user) {
       return NextResponse.json({ error: "Authentication is required." }, { status: 401 });
+    }
+
+    const withinRateLimit = await enforceRateLimit("summarize");
+    if (!withinRateLimit) {
+      return NextResponse.json(
+        { error: "Too many requests. Please wait a few minutes and try again.", code: "RATE_LIMITED" },
+        { status: 429 }
+      );
     }
 
     let body: { transcript?: string; meetingTitle?: string };

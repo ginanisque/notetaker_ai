@@ -1,5 +1,7 @@
 import "server-only";
 import type { WorkspaceInvite, WorkspaceMember } from "@/lib/types";
+import { sendWorkspaceInviteEmail } from "@/lib/email";
+import { getRequiredEnv } from "@/lib/env";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 
 type InviteRow = {
@@ -132,7 +134,23 @@ export async function createWorkspaceInvite(workspaceId: string, email: string, 
     throw new Error(error.message);
   }
 
-  return mapInvite(data as InviteRow);
+  const invite = mapInvite(data as InviteRow);
+
+  try {
+    const appUrl = getRequiredEnv("NEXT_PUBLIC_APP_URL");
+    const inviterName = (user.user_metadata?.full_name as string | undefined) || user.email || "A teammate";
+
+    await sendWorkspaceInviteEmail({
+      to: invite.invitedEmail,
+      workspaceName: invite.workspaceName || "your workspace",
+      inviterName,
+      inviteUrl: `${appUrl}/invites/${invite.id}`
+    });
+  } catch (emailError) {
+    console.error("Workspace invite email failed to send (invite link is still valid):", emailError);
+  }
+
+  return invite;
 }
 
 export async function getInviteById(id: string) {

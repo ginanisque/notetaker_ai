@@ -4,10 +4,12 @@ import { ArrowLeft } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import CommentsPanel from "@/components/CommentsPanel";
 import DuplicateMeetings from "@/components/DuplicateMeetings";
+import MeetingAudioPlayer from "@/components/MeetingAudioPlayer";
 import MeetingSummary from "@/components/MeetingSummary";
 import TagsPanel from "@/components/TagsPanel";
 import { requireUser } from "@/lib/auth";
 import { findDuplicateMeetings, getMeetingById } from "@/lib/meetings";
+import { getSignedAudioUrl } from "@/lib/storage";
 import { getWorkspaceMembers } from "@/lib/workspace-invites";
 import { formatDate } from "@/lib/utils";
 
@@ -24,6 +26,7 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
 
   const duplicateCandidates = meeting.mergedFrom?.length ? [] : await findDuplicateMeetings(meeting);
   const members = meeting.workspaceId ? await getWorkspaceMembers(meeting.workspaceId) : [];
+  const signedAudioUrl = meeting.audioUrl ? await getSignedAudioUrl(meeting.audioUrl) : null;
 
   return (
     <AppShell
@@ -43,6 +46,7 @@ export default async function MeetingDetailPage({ params }: { params: Promise<{ 
       <div className="mx-auto max-w-5xl">
         <section className="mt-8">
           <DuplicateMeetings meeting={meeting} candidates={duplicateCandidates} />
+          {signedAudioUrl ? <MeetingAudioPlayer audioUrl={signedAudioUrl} /> : null}
           <div className="mb-8">
             <TagsPanel meetingId={meeting.id} workspaceId={meeting.workspaceId} tags={meeting.tags ?? []} />
           </div>

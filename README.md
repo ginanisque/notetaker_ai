@@ -17,6 +17,11 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
+NEXT_PUBLIC_APP_URL=
+RESEND_API_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_ID=
 ```
 
 3. In Supabase, run the SQL files in `supabase/migrations/` in order.
@@ -48,7 +53,25 @@ Create a Supabase project, keep Data API enabled, and run the SQL migration. The
 It also enables Row Level Security so users can only access their personal meetings and workspace meetings where they are members.
 
 Additional migrations add meeting-session coordination, duplicate merge support, and workspace invite links.
-The latest collaboration migration adds direct member management, comments, tags, and richer action item editing.
+Later migrations add direct member management, comments, tags, and richer action item editing.
+The most recent migrations (`007`-`010`) add Stripe billing columns, monthly usage tracking, API rate limiting, and a private Storage bucket for recorded audio.
+
+## Billing, usage, and rate limiting
+
+- Free-tier accounts get 60 transcription minutes/month; the cap is enforced server-side in `/api/transcribe` before each OpenAI call. Subscribing to Pro (via Stripe Checkout, from `/billing`) removes the cap.
+- `/api/transcribe` and `/api/summarize` are also rate-limited per user (a Supabase-backed sliding window) to prevent runaway API costs from scripted abuse.
+- Recorded audio is uploaded to a private Supabase Storage bucket (`meeting-audio`) and played back on the meeting detail page via a short-lived signed URL.
+- Workspace invites send a real email via Resend in addition to the copyable invite link already shown in the UI. The default sender (`onboarding@resend.dev`) is a sandbox address — verify your own domain in Resend before relying on this for production deliverability.
+
+### Local Stripe webhook testing
+
+Use the [Stripe CLI](https://stripe.com/docs/stripe-cli) to forward test-mode webhook events to your local server:
+
+```bash
+stripe listen --forward-to localhost:3000/api/stripe/webhook
+```
+
+Copy the signing secret it prints into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
 
 ## Team Workflow
 
@@ -76,11 +99,18 @@ NEXT_PUBLIC_SUPABASE_URL=
 NEXT_PUBLIC_SUPABASE_ANON_KEY=
 SUPABASE_SERVICE_ROLE_KEY=
 OPENAI_API_KEY=
+NEXT_PUBLIC_APP_URL=
+RESEND_API_KEY=
+STRIPE_SECRET_KEY=
+STRIPE_WEBHOOK_SECRET=
+STRIPE_PRICE_ID=
 ```
 
-4. Deploy.
+4. In Stripe, create a webhook endpoint pointing at `https://<your-domain>/api/stripe/webhook` listening for `checkout.session.completed`, `customer.subscription.updated`, and `customer.subscription.deleted`, then copy its signing secret into `STRIPE_WEBHOOK_SECRET`.
 
-The OpenAI key and Supabase service role key are only used server-side. Do not expose them in client components.
+5. Deploy.
+
+The OpenAI key, Stripe secret key, Resend key, and Supabase service role key are only used server-side. Do not expose them in client components.
 
 ## Checks
 

@@ -1,6 +1,6 @@
 import Link from "next/link";
 import type { ReactNode } from "react";
-import { AudioLines, ListChecks, Mic } from "lucide-react";
+import { AudioLines, CreditCard, ListChecks, Mic } from "lucide-react";
 import LogoutButton from "@/components/LogoutButton";
 
 export default function AppShell({
@@ -40,6 +40,13 @@ export default function AppShell({
             >
               <Mic className="h-4 w-4" aria-hidden />
               Record
+            </Link>
+            <Link
+              href="/billing"
+              className="hidden items-center gap-2 rounded-md px-3 py-2 text-sm font-semibold text-neutral-700 transition hover:bg-[#eef2ef] hover:text-accent sm:inline-flex"
+            >
+              <CreditCard className="h-4 w-4" aria-hidden />
+              Billing
             </Link>
             <LogoutButton />
           </div>

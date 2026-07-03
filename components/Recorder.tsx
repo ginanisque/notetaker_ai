@@ -210,13 +210,25 @@ export default function Recorder({
       const extension = mimeType.includes("webm") ? "webm" : "audio";
       const audioFileName = `meeting-${Date.now()}.${extension}`;
       formData.append("audio", blob, audioFileName);
+      formData.append("durationSeconds", String(seconds));
 
       const transcribeResponse = await fetch("/api/transcribe", {
         method: "POST",
         body: formData
       });
-      const transcribeJson = (await transcribeResponse.json()) as { transcript?: string; error?: string };
+      const transcribeJson = (await transcribeResponse.json()) as {
+        transcript?: string;
+        audioUrl?: string | null;
+        error?: string;
+        code?: string;
+      };
       if (!transcribeResponse.ok || !transcribeJson.transcript) {
+        if (transcribeJson.code === "USAGE_CAP_EXCEEDED") {
+          throw new Error(`${transcribeJson.error} Visit /billing to upgrade.`);
+        }
+        if (transcribeJson.code === "RATE_LIMITED") {
+          throw new Error(transcribeJson.error || "Too many requests. Please wait a few minutes and try again.");
+        }
         throw new Error(transcribeJson.error || "Transcription failed.");
       }
 
@@ -244,6 +256,7 @@ export default function Recorder({
         date: new Date().toISOString(),
         transcript: transcribeJson.transcript,
         summary: { ...summary, meetingTitle: title },
+        audioUrl: transcribeJson.audioUrl ?? null,
         audioFileName
       };
 
