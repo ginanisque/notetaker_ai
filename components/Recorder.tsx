@@ -211,6 +211,9 @@ export default function Recorder({
       const audioFileName = `meeting-${Date.now()}.${extension}`;
       formData.append("audio", blob, audioFileName);
       formData.append("durationSeconds", String(seconds));
+      if (workspaceId) {
+        formData.append("workspaceId", workspaceId);
+      }
 
       const transcribeResponse = await fetch("/api/transcribe", {
         method: "POST",

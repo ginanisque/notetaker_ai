@@ -2,20 +2,24 @@ import Link from "next/link";
 import { ClipboardList, Mic, Users } from "lucide-react";
 import AppShell from "@/components/AppShell";
 import MeetingCard from "@/components/MeetingCard";
+import WorkspaceBillingPanel from "@/components/WorkspaceBillingPanel";
 import WorkspaceInvitePanel from "@/components/WorkspaceInvitePanel";
 import { requireUser } from "@/lib/auth";
+import { getWorkspaceBillingSummary } from "@/lib/workspace-billing";
 import { getWorkspaceDashboard } from "@/lib/workspaces";
 
 export const dynamic = "force-dynamic";
 
 export default async function WorkspaceDashboardPage({ params }: { params: Promise<{ id: string }> }) {
-  await requireUser();
+  const user = await requireUser();
   const { id } = await params;
-  const dashboard = await getWorkspaceDashboard(id);
+  const [dashboard, billingSummary] = await Promise.all([getWorkspaceDashboard(id), getWorkspaceBillingSummary(id)]);
 
   if (!dashboard.workspace) {
     return null;
   }
+
+  const isOwner = dashboard.workspace.ownerId === user.id;
 
   return (
     <AppShell
@@ -72,7 +76,10 @@ export default async function WorkspaceDashboardPage({ params }: { params: Promi
             )}
           </div>
         </div>
-        <WorkspaceInvitePanel workspaceId={id} />
+        <div className="space-y-6">
+          <WorkspaceBillingPanel workspaceId={id} isOwner={isOwner} summary={billingSummary} />
+          <WorkspaceInvitePanel workspaceId={id} />
+        </div>
       </section>
     </AppShell>
   );

@@ -38,8 +38,12 @@ export async function POST(request: Request) {
     }
 
     const durationSeconds = Number(formData.get("durationSeconds") ?? 0);
+    const workspaceId = formData.get("workspaceId");
 
-    const usage = await checkAndRecordUsage(Number.isFinite(durationSeconds) ? durationSeconds : 0);
+    const usage = await checkAndRecordUsage(
+      Number.isFinite(durationSeconds) ? durationSeconds : 0,
+      typeof workspaceId === "string" ? workspaceId : null
+    );
     if (!usage.allowed) {
       return NextResponse.json(
         {

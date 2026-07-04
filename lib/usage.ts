@@ -3,10 +3,14 @@ import { createSupabaseServerClient } from "@/lib/supabase/server";
 
 export type UsageCheckResult = { allowed: boolean; remainingSeconds: number | null };
 
-export async function checkAndRecordUsage(durationSeconds: number): Promise<UsageCheckResult> {
+export async function checkAndRecordUsage(
+  durationSeconds: number,
+  workspaceId?: string | null
+): Promise<UsageCheckResult> {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase.rpc("check_and_increment_usage", {
-    p_seconds: Math.max(0, Math.round(durationSeconds))
+    p_seconds: Math.max(0, Math.round(durationSeconds)),
+    p_workspace_id: workspaceId || null
   });
 
   if (error) {

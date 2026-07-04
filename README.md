@@ -22,6 +22,8 @@ RESEND_API_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID=
+STRIPE_TEAM_PRICE_ID_MONTHLY=
+STRIPE_TEAM_PRICE_ID_ANNUAL=
 CRON_SECRET=
 ```
 
@@ -57,6 +59,8 @@ Additional migrations add meeting-session coordination, duplicate merge support,
 Later migrations add direct member management, comments, tags, and richer action item editing.
 Migrations `007`-`010` add Stripe billing columns, monthly usage tracking, API rate limiting, and a private Storage bucket for recorded audio.
 Migration `011` adds a 30-day trash for meetings.
+Migration `012` adds unread-comment notification tracking.
+Migration `013` adds workspace-level (seat-based) Team billing.
 
 ## Billing, usage, and rate limiting
 
@@ -74,6 +78,21 @@ stripe listen --forward-to localhost:3000/api/stripe/webhook
 ```
 
 Copy the signing secret it prints into `STRIPE_WEBHOOK_SECRET` in `.env.local`.
+
+## Workspace Team billing
+
+A workspace owner can subscribe their whole workspace to the Team plan — seat count tracks workspace membership automatically, and any member recording into a Team-plan workspace bypasses their own personal free-tier usage cap.
+
+This requires manually configuring two **tiered/graduated** Stripe Prices under a "Team Plan" product (Stripe has no API shortcut worth scripting for a one-time setup):
+
+| Price | Interval | Tier 1 (up to 5 units) | Tier 2 (6-25 units) |
+|---|---|---|---|
+| `STRIPE_TEAM_PRICE_ID_MONTHLY` | Monthly | Flat `$15.00` | `$4.00`/unit graduated |
+| `STRIPE_TEAM_PRICE_ID_ANNUAL` | Yearly | Flat `$144.00` | `$38.40`/unit graduated |
+
+In the Stripe dashboard: Products → Add Product → "Team Plan" → Add Price → pricing model **Tiered** → tiers mode **Graduated** → enter the two tiers above (make sure tier 2's upper bound is unbounded/"and above" so larger teams don't fail to check out — the product isn't meant to be sold to teams that large yet, but the price object should still be able to charge them). Repeat for the annual price with a yearly billing period. Copy each Price ID into the matching env var.
+
+The pricing math is duplicated as a pure function in `lib/team-pricing.ts` for display previews only — if you ever change the Stripe tiers, update that file to match.
 
 ## Meeting trash
 
@@ -116,6 +135,8 @@ RESEND_API_KEY=
 STRIPE_SECRET_KEY=
 STRIPE_WEBHOOK_SECRET=
 STRIPE_PRICE_ID=
+STRIPE_TEAM_PRICE_ID_MONTHLY=
+STRIPE_TEAM_PRICE_ID_ANNUAL=
 CRON_SECRET=
 ```
 

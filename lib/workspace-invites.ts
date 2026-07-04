@@ -3,6 +3,7 @@ import type { WorkspaceInvite, WorkspaceMember } from "@/lib/types";
 import { sendWorkspaceInviteEmail } from "@/lib/email";
 import { getRequiredEnv } from "@/lib/env";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
+import { syncWorkspaceSeatCount } from "@/lib/workspace-billing";
 
 type InviteRow = {
   id: string;
@@ -206,6 +207,8 @@ export async function acceptWorkspaceInvite(id: string) {
   if (memberError) {
     throw new Error(memberError.message);
   }
+
+  await syncWorkspaceSeatCount(invite.workspaceId);
 
   const { data, error } = await supabase
     .from("workspace_invites")

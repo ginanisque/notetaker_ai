@@ -15,8 +15,14 @@ function mapSubscriptionStatus(status: Stripe.Subscription.Status): "active" | "
 async function syncSubscription(customerId: string, subscription: Stripe.Subscription | null) {
   const admin = createSupabaseAdminClient();
   const status = subscription ? mapSubscriptionStatus(subscription.status) : "canceled";
+  const priceInterval = subscription?.items.data[0]?.price.recurring?.interval;
+  const billingInterval = priceInterval === "year" ? "annual" : priceInterval === "month" ? "monthly" : null;
 
-  const { error } = await admin
+  // A given Stripe customer belongs to at most one of these two tables
+  // (individual Pro customers vs. workspace Team customers), so updating
+  // both by stripe_customer_id is safe — the non-matching update just
+  // affects zero rows.
+  const { error: profileError } = await admin
     .from("profiles")
     .update({
       subscription_status: status,
@@ -24,8 +30,21 @@ async function syncSubscription(customerId: string, subscription: Stripe.Subscri
     })
     .eq("stripe_customer_id", customerId);
 
-  if (error) {
-    throw new Error(error.message);
+  if (profileError) {
+    throw new Error(profileError.message);
+  }
+
+  const { error: workspaceError } = await admin
+    .from("workspaces")
+    .update({
+      subscription_status: status,
+      stripe_subscription_id: subscription?.id ?? null,
+      billing_interval: billingInterval
+    })
+    .eq("stripe_customer_id", customerId);
+
+  if (workspaceError) {
+    throw new Error(workspaceError.message);
   }
 }
 

@@ -3,6 +3,7 @@ import type { ActionItem, MeetingRecord, WorkspaceMember } from "@/lib/types";
 import { createSupabaseAdminClient, createSupabaseServerClient } from "@/lib/supabase/server";
 import { getMeetings, getWorkspaces } from "@/lib/meetings";
 import { getWorkspaceMembers } from "@/lib/workspace-invites";
+import { syncWorkspaceSeatCount } from "@/lib/workspace-billing";
 
 export async function getWorkspaceById(id: string) {
   const workspaces = await getWorkspaces();
@@ -40,6 +41,8 @@ export async function addWorkspaceMemberByEmail(workspaceId: string, email: stri
     throw new Error(error.message);
   }
 
+  await syncWorkspaceSeatCount(workspaceId);
+
   return {
     id: data.id,
     workspaceId: data.workspace_id,
@@ -63,6 +66,8 @@ export async function removeWorkspaceMember(workspaceId: string, memberId: strin
   if (error) {
     throw new Error(error.message);
   }
+
+  await syncWorkspaceSeatCount(workspaceId);
 }
 
 export async function getWorkspaceActionItems(workspaceId: string): Promise<ActionItem[]> {
