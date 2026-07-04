@@ -2,6 +2,7 @@ import "server-only";
 import type {
   ActionItem,
   DuplicateMeetingCandidate,
+  MeetingAttendee,
   MeetingRecord,
   MeetingSummary,
   SaveMeetingInput,
@@ -42,6 +43,10 @@ type MeetingRow = {
   summary_json: unknown;
   audio_url: string | null;
   deleted_at: string | null;
+  calendar_provider: string | null;
+  calendar_event_id: string | null;
+  calendar_event_url: string | null;
+  attendees_json: MeetingAttendee[] | null;
   meeting_session_id: string | null;
   merged_from: string[];
   created_at: string;
@@ -149,6 +154,10 @@ function mapMeeting(row: MeetingRow): MeetingRecord {
     summary,
     audioUrl: row.audio_url,
     deletedAt: row.deleted_at,
+    calendarProvider: row.calendar_provider,
+    calendarEventId: row.calendar_event_id,
+    calendarEventUrl: row.calendar_event_url,
+    attendeesJson: row.attendees_json,
     actionItems: row.action_items?.map(mapActionItem) ?? [],
     comments: row.comments?.map(mapComment) ?? [],
     tags: row.meeting_tag_links?.map((link) => link.meeting_tags).filter((tag): tag is TagRow => Boolean(tag)).map(mapTag) ?? [],
@@ -410,7 +419,11 @@ export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecor
       date: input.date,
       transcript: input.transcript,
       summary_json: input.summary,
-      audio_url: input.audioUrl ?? null
+      audio_url: input.audioUrl ?? null,
+      calendar_provider: input.calendarProvider ?? null,
+      calendar_event_id: input.calendarEventId ?? null,
+      calendar_event_url: input.calendarEventUrl ?? null,
+      attendees_json: input.attendeesJson ?? null
     })
     .select("*")
     .single();

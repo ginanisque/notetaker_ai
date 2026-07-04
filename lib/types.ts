@@ -28,6 +28,21 @@ export interface MeetingSummary {
   followUpEmail: string;
 }
 
+export interface MeetingAttendee {
+  email: string;
+  displayName: string | null;
+}
+
+export interface CalendarEventPrefill {
+  calendarEventId: string;
+  title: string | null;
+  meetingUrl: string | null;
+  platform: string | null;
+  scheduledStart: string | null;
+  scheduledEnd: string | null;
+  attendees: MeetingAttendee[];
+}
+
 export interface MeetingRecord {
   id: string;
   ownerId?: string;
@@ -42,6 +57,10 @@ export interface MeetingRecord {
   audioFileName?: string;
   audioUrl?: string | null;
   deletedAt?: string | null;
+  calendarProvider?: string | null;
+  calendarEventId?: string | null;
+  calendarEventUrl?: string | null;
+  attendeesJson?: MeetingAttendee[] | null;
   actionItems?: PersistedActionItem[];
   comments?: MeetingComment[];
   tags?: MeetingTag[];
@@ -57,6 +76,10 @@ export interface SaveMeetingInput {
   summary: MeetingSummary;
   audioUrl?: string | null;
   audioFileName?: string;
+  calendarProvider?: string | null;
+  calendarEventId?: string | null;
+  calendarEventUrl?: string | null;
+  attendeesJson?: MeetingAttendee[] | null;
 }
 
 export interface Workspace {

@@ -25,6 +25,9 @@ STRIPE_PRICE_ID=
 STRIPE_TEAM_PRICE_ID_MONTHLY=
 STRIPE_TEAM_PRICE_ID_ANNUAL=
 CRON_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
 ```
 
 3. In Supabase, run the SQL files in `supabase/migrations/` in order.
@@ -61,6 +64,7 @@ Migrations `007`-`010` add Stripe billing columns, monthly usage tracking, API r
 Migration `011` adds a 30-day trash for meetings.
 Migration `012` adds unread-comment notification tracking.
 Migration `013` adds workspace-level (seat-based) Team billing.
+Migration `014` adds Google Calendar connections and calendar-provenance columns on `meetings`.
 
 ## Billing, usage, and rate limiting
 
@@ -93,6 +97,17 @@ This requires manually configuring two **tiered/graduated** Stripe Prices under 
 In the Stripe dashboard: Products → Add Product → "Team Plan" → Add Price → pricing model **Tiered** → tiers mode **Graduated** → enter the two tiers above (make sure tier 2's upper bound is unbounded/"and above" so larger teams don't fail to check out — the product isn't meant to be sold to teams that large yet, but the price object should still be able to charge them). Repeat for the annual price with a yearly billing period. Copy each Price ID into the matching env var.
 
 The pricing math is duplicated as a pure function in `lib/team-pricing.ts` for display previews only — if you ever change the Stripe tiers, update that file to match.
+
+## Google Calendar integration
+
+Connect Google Calendar to browse upcoming meetings and pre-fill the Record page from a calendar event — this is organize-and-prepare only: the app never joins meetings, sends invites, or edits your calendar.
+
+1. In [Google Cloud Console](https://console.cloud.google.com/), create (or select) a project, then **APIs & Services → Library** and enable the **Google Calendar API**.
+2. **APIs & Services → OAuth consent screen**: set it up for your app (External is fine for testing with your own Google account added as a test user).
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**, application type **Web application**. Add an authorized redirect URI matching `GOOGLE_REDIRECT_URI` exactly (e.g. `http://localhost:3000/api/google/callback` locally, `https://<your-domain>/api/google/callback` in production).
+4. Copy the generated Client ID and Client Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
+
+The app requests only the minimal `calendar.events.readonly` scope (read-only event access — never write). Tokens are stored server-side in `calendar_connections` (migration `014`), which has **no client-side database access at all** — every read/write goes through an authenticated API route using the service-role client. Connect/disconnect from `/integrations`; browse and prepare notes from `/calendar`.
 
 ## Meeting trash
 
@@ -138,6 +153,9 @@ STRIPE_PRICE_ID=
 STRIPE_TEAM_PRICE_ID_MONTHLY=
 STRIPE_TEAM_PRICE_ID_ANNUAL=
 CRON_SECRET=
+GOOGLE_CLIENT_ID=
+GOOGLE_CLIENT_SECRET=
+GOOGLE_REDIRECT_URI=
 ```
 
 4. In Stripe, create a webhook endpoint pointing at `https://<your-domain>/api/stripe/webhook` listening for `checkout.session.completed`, `customer.subscription.updated`, and `customer.subscription.deleted`, then copy its signing secret into `STRIPE_WEBHOOK_SECRET`.

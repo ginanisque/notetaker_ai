@@ -1,4 +1,4 @@
-import type { ActionItem, MeetingRecord, MeetingSummary, SaveMeetingInput } from "@/lib/types";
+import type { ActionItem, MeetingAttendee, MeetingRecord, MeetingSummary, SaveMeetingInput } from "@/lib/types";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return typeof value === "object" && value !== null && !Array.isArray(value);
@@ -49,6 +49,14 @@ export function isMeetingRecord(value: unknown): value is MeetingRecord {
   );
 }
 
+function isMeetingAttendee(value: unknown): value is MeetingAttendee {
+  return (
+    isRecord(value) &&
+    typeof value.email === "string" &&
+    (value.displayName === null || typeof value.displayName === "string")
+  );
+}
+
 export function isSaveMeetingInput(value: unknown): value is SaveMeetingInput {
   return (
     isRecord(value) &&
@@ -64,6 +72,12 @@ export function isSaveMeetingInput(value: unknown): value is SaveMeetingInput {
     value.transcript.trim().length > 0 &&
     isMeetingSummary(value.summary) &&
     (value.audioUrl === undefined || value.audioUrl === null || typeof value.audioUrl === "string") &&
-    (value.audioFileName === undefined || typeof value.audioFileName === "string")
+    (value.audioFileName === undefined || typeof value.audioFileName === "string") &&
+    (value.calendarProvider === undefined || value.calendarProvider === null || typeof value.calendarProvider === "string") &&
+    (value.calendarEventId === undefined || value.calendarEventId === null || typeof value.calendarEventId === "string") &&
+    (value.calendarEventUrl === undefined || value.calendarEventUrl === null || typeof value.calendarEventUrl === "string") &&
+    (value.attendeesJson === undefined ||
+      value.attendeesJson === null ||
+      (Array.isArray(value.attendeesJson) && value.attendeesJson.every(isMeetingAttendee)))
   );
 }

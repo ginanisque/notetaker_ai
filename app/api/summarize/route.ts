@@ -81,7 +81,7 @@ export async function POST(request: Request) {
     }
 
     const transcript = body.transcript?.trim();
-    const meetingTitle = body.meetingTitle?.trim() || "Untitled meeting";
+    const providedTitle = body.meetingTitle?.trim() || "";
 
     if (!transcript) {
       return NextResponse.json({ error: "Transcript is required." }, { status: 400 });
@@ -117,7 +117,7 @@ Rules:
 * Write the follow-up email in a professional tone.
 * Return JSON only, no markdown.
 
-Meeting title: ${meetingTitle}
+Meeting title: ${providedTitle || "Not specified"}
 
 Transcript:
 ${transcript}`;
@@ -145,7 +145,7 @@ ${transcript}`;
       throw new Error("Summary response did not match the expected structure.");
     }
 
-    return NextResponse.json({ ...fallbackSummary, ...parsed, meetingTitle: parsed.meetingTitle || meetingTitle });
+    return NextResponse.json({ ...fallbackSummary, ...parsed, meetingTitle: parsed.meetingTitle || providedTitle });
   } catch (error) {
     console.error("Summarization failed:", error);
     return NextResponse.json({ error: getApiErrorMessage(error, "Summarization failed.") }, { status: 500 });

@@ -1,5 +1,5 @@
 import Link from "next/link";
-import { AudioLines, ClipboardList, CreditCard, ListChecks, Mic, Trash2 } from "lucide-react";
+import { AudioLines, CalendarDays, ClipboardList, CreditCard, ListChecks, Mic, Plug, Trash2 } from "lucide-react";
 import LogoutButton from "@/components/LogoutButton";
 import NotificationBell from "@/components/NotificationBell";
 import type { MeetingRecord, Workspace } from "@/lib/types";
@@ -7,8 +7,10 @@ import type { MeetingRecord, Workspace } from "@/lib/types";
 const navLinks = [
   { href: "/meetings", label: "Meetings", icon: ListChecks },
   { href: "/record", label: "Record", icon: Mic },
+  { href: "/calendar", label: "Calendar", icon: CalendarDays },
   { href: "/meetings/trash", label: "Trash", icon: Trash2 },
-  { href: "/billing", label: "Billing", icon: CreditCard }
+  { href: "/billing", label: "Billing", icon: CreditCard },
+  { href: "/integrations", label: "Integrations", icon: Plug }
 ];
 
 export default function Sidebar({

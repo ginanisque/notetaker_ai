@@ -1,11 +1,19 @@
 "use client";
 
-import { Mic, Radio, Square, Upload } from "lucide-react";
+import { CalendarClock, ExternalLink, Mic, Radio, Square, Upload, Users } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import StatusMessage from "@/components/StatusMessage";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
-import type { MeetingRecord, MeetingSession, MeetingSummary, SaveMeetingInput, Workspace } from "@/lib/types";
+import type {
+  CalendarEventPrefill,
+  MeetingRecord,
+  MeetingSession,
+  MeetingSummary,
+  SaveMeetingInput,
+  Workspace
+} from "@/lib/types";
+import { formatDate } from "@/lib/utils";
 
 type ProcessingStep = "idle" | "recording" | "transcribing" | "summarizing" | "saving" | "complete";
 
@@ -17,17 +25,25 @@ function formatTimer(totalSeconds: number) {
   return `${minutes}:${seconds}`;
 }
 
+function formatFallbackTitle(workspaceName: string | undefined, date: Date) {
+  const datePart = new Intl.DateTimeFormat("en-CA").format(date);
+  const timePart = new Intl.DateTimeFormat("en-GB", { hour: "2-digit", minute: "2-digit", hour12: false }).format(date);
+  return `${workspaceName ?? "Personal"}/${datePart}/${timePart}`;
+}
+
 export default function Recorder({
   workspaces,
   initialWorkspaceId = "",
-  userId
+  userId,
+  calendarEvent = null
 }: {
   workspaces: Workspace[];
   initialWorkspaceId?: string;
   userId: string;
+  calendarEvent?: CalendarEventPrefill | null;
 }) {
   const router = useRouter();
-  const [meetingTitle, setMeetingTitle] = useState("");
+  const [meetingTitle, setMeetingTitle] = useState(calendarEvent?.title || "");
   const [workspaceId, setWorkspaceId] = useState(initialWorkspaceId);
   const [activeSession, setActiveSession] = useState<MeetingSession | null>(null);
   const [currentSessionId, setCurrentSessionId] = useState<string | null>(null);
@@ -263,16 +279,22 @@ export default function Recorder({
       const summary = summarizeJson as MeetingSummary;
 
       setStep("saving");
-      const title = summary.meetingTitle || meetingTitle.trim() || "Untitled meeting";
+      const meetingDate = new Date();
+      const title =
+        summary.meetingTitle || meetingTitle.trim() || formatFallbackTitle(selectedWorkspace?.name, meetingDate);
       const meeting: SaveMeetingInput = {
         title,
         workspaceId: workspaceId || null,
         meetingSessionId: sessionIdRef.current,
-        date: new Date().toISOString(),
+        date: meetingDate.toISOString(),
         transcript: transcribeJson.transcript,
         summary: { ...summary, meetingTitle: title },
         audioUrl: transcribeJson.audioUrl ?? null,
-        audioFileName
+        audioFileName,
+        calendarProvider: calendarEvent ? "google" : null,
+        calendarEventId: calendarEvent?.calendarEventId ?? null,
+        calendarEventUrl: calendarEvent?.meetingUrl ?? null,
+        attendeesJson: calendarEvent?.attendees.length ? calendarEvent.attendees : null
       };
 
       const saveResponse = await fetch("/api/meetings", {
@@ -307,6 +329,41 @@ export default function Recorder({
 
   return (
     <div className="space-y-6">
+      {calendarEvent ? (
+        <div className="surface space-y-2 rounded-md p-4">
+          <p className="text-sm font-semibold uppercase tracking-wide text-accent">From Google Calendar</p>
+          {calendarEvent.platform ? (
+            <span className="inline-flex rounded-full border border-accent/30 bg-mist px-2 py-0.5 text-xs font-semibold text-accent">
+              {calendarEvent.platform}
+            </span>
+          ) : null}
+          {calendarEvent.scheduledStart ? (
+            <p className="flex items-center gap-2 text-sm text-neutral-700">
+              <CalendarClock className="h-4 w-4 text-neutral-400" aria-hidden />
+              {formatDate(calendarEvent.scheduledStart)}
+              {calendarEvent.scheduledEnd ? ` - ${formatDate(calendarEvent.scheduledEnd)}` : ""}
+            </p>
+          ) : null}
+          {calendarEvent.meetingUrl ? (
+            <a
+              href={calendarEvent.meetingUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="flex w-fit items-center gap-2 text-sm font-semibold text-accent hover:underline"
+            >
+              <ExternalLink className="h-4 w-4" aria-hidden />
+              Open meeting link
+            </a>
+          ) : null}
+          {calendarEvent.attendees.length > 0 ? (
+            <p className="flex items-center gap-2 text-sm text-neutral-700">
+              <Users className="h-4 w-4 text-neutral-400" aria-hidden />
+              {calendarEvent.attendees.map((attendee) => attendee.displayName || attendee.email).join(", ")}
+            </p>
+          ) : null}
+        </div>
+      ) : null}
+
       <div className="flex items-center justify-between rounded-md bg-ink px-5 py-4 text-white">
         <div>
           <p className="text-sm font-semibold text-white/65">Recorder status</p>

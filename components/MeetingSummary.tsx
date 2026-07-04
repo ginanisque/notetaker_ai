@@ -1,8 +1,10 @@
+import { ExternalLink } from "lucide-react";
 import ActionItemsTable from "@/components/ActionItemsTable";
 import CopyButton from "@/components/CopyButton";
 import DownloadNotesButton from "@/components/DownloadNotesButton";
 import EmailTeamButton from "@/components/EmailTeamButton";
 import EmailButton from "@/components/EmailButton";
+import { detectMeetingPlatform } from "@/lib/meeting-platform";
 import type { MeetingRecord, WorkspaceMember } from "@/lib/types";
 import { notesToText, safeFileName } from "@/lib/utils";
 
@@ -34,9 +36,30 @@ export default function MeetingSummary({
 }) {
   const notesText = notesToText(meeting.summary, meeting.transcript);
   const actionItems = meeting.actionItems?.length ? meeting.actionItems : meeting.summary.actionItems;
+  const platform = detectMeetingPlatform(meeting.calendarEventUrl);
 
   return (
     <div className="space-y-8">
+      {meeting.calendarProvider ? (
+        <div className="flex flex-wrap items-center gap-3 rounded-md border border-accent/20 bg-mist px-4 py-3">
+          <span className="rounded-full border border-accent/30 bg-white px-2 py-0.5 text-xs font-semibold text-accent">
+            From Google Calendar
+          </span>
+          {platform ? <span className="text-sm font-semibold text-ink">{platform}</span> : null}
+          {meeting.calendarEventUrl ? (
+            <a
+              href={meeting.calendarEventUrl}
+              target="_blank"
+              rel="noreferrer"
+              className="inline-flex items-center gap-1 text-sm font-semibold text-accent hover:underline"
+            >
+              <ExternalLink className="h-3.5 w-3.5" aria-hidden />
+              Open meeting link
+            </a>
+          ) : null}
+        </div>
+      ) : null}
+
       <section className="space-y-4">
         <div className="flex flex-wrap gap-3">
           <CopyButton text={notesText} label="Copy notes" />
