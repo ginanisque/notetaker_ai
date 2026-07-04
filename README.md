@@ -104,7 +104,7 @@ Connect Google Calendar to browse upcoming meetings and pre-fill the Record page
 
 1. In [Google Cloud Console](https://console.cloud.google.com/), create (or select) a project, then **APIs & Services → Library** and enable the **Google Calendar API**.
 2. **APIs & Services → OAuth consent screen**: set it up for your app (External is fine for testing with your own Google account added as a test user).
-3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**, application type **Web application**. Add an authorized redirect URI matching `GOOGLE_REDIRECT_URI` exactly (e.g. `http://localhost:3000/api/google/callback` locally, `https://<your-domain>/api/google/callback` in production).
+3. **APIs & Services → Credentials → Create Credentials → OAuth client ID**, application type **Web application**. Add an authorized redirect URI matching `GOOGLE_REDIRECT_URI` exactly (e.g. `http://localhost:3000/api/google/callback` locally, `https://<your-domain>/api/google/callback` in production — Google Cloud lets you register multiple redirect URIs on the same OAuth client, so both can coexist).
 4. Copy the generated Client ID and Client Secret into `GOOGLE_CLIENT_ID` / `GOOGLE_CLIENT_SECRET`.
 
 The app requests only the minimal `calendar.events.readonly` scope (read-only event access — never write). Tokens are stored server-side in `calendar_connections` (migration `014`), which has **no client-side database access at all** — every read/write goes through an authenticated API route using the service-role client. Connect/disconnect from `/integrations`; browse and prepare notes from `/calendar`.
