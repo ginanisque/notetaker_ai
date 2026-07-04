@@ -3,21 +3,24 @@ import { createSupabaseAdminClient } from "@/lib/supabase/server";
 
 const BUCKET = "meeting-audio";
 
-export async function uploadMeetingAudio(userId: string, file: File): Promise<string> {
+export async function downloadMeetingAudio(path: string): Promise<Blob> {
   const supabase = createSupabaseAdminClient();
-  const extension = file.name.includes(".") ? file.name.split(".").pop() : "webm";
-  const path = `${userId}/${crypto.randomUUID()}.${extension}`;
+  const { data, error } = await supabase.storage.from(BUCKET).download(path);
 
-  const { error } = await supabase.storage.from(BUCKET).upload(path, file, {
-    contentType: file.type || "audio/webm",
-    upsert: false
-  });
-
-  if (error) {
-    throw new Error(error.message);
+  if (error || !data) {
+    throw new Error(error?.message || "Unable to download recorded audio.");
   }
 
-  return path;
+  return data;
+}
+
+export async function removeMeetingAudio(path: string): Promise<void> {
+  try {
+    const supabase = createSupabaseAdminClient();
+    await supabase.storage.from(BUCKET).remove([path]);
+  } catch (error) {
+    console.error("Failed to remove orphaned audio upload:", error);
+  }
 }
 
 export async function getSignedAudioUrl(path: string, expiresInSeconds = 3600): Promise<string | null> {

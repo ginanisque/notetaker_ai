@@ -4,6 +4,7 @@ import { Mic, Radio, Square, Upload } from "lucide-react";
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import StatusMessage from "@/components/StatusMessage";
+import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type { MeetingRecord, MeetingSession, MeetingSummary, SaveMeetingInput, Workspace } from "@/lib/types";
 
 type ProcessingStep = "idle" | "recording" | "transcribing" | "summarizing" | "saving" | "complete";
@@ -18,10 +19,12 @@ function formatTimer(totalSeconds: number) {
 
 export default function Recorder({
   workspaces,
-  initialWorkspaceId = ""
+  initialWorkspaceId = "",
+  userId
 }: {
   workspaces: Workspace[];
   initialWorkspaceId?: string;
+  userId: string;
 }) {
   const router = useRouter();
   const [meetingTitle, setMeetingTitle] = useState("");
@@ -206,18 +209,27 @@ export default function Recorder({
 
     try {
       setStep("transcribing");
-      const formData = new FormData();
       const extension = mimeType.includes("webm") ? "webm" : "audio";
       const audioFileName = `meeting-${Date.now()}.${extension}`;
-      formData.append("audio", blob, audioFileName);
-      formData.append("durationSeconds", String(seconds));
-      if (workspaceId) {
-        formData.append("workspaceId", workspaceId);
+
+      const supabase = createSupabaseBrowserClient();
+      const storagePath = `${userId}/${crypto.randomUUID()}.${extension}`;
+      const { error: uploadError } = await supabase.storage
+        .from("meeting-audio")
+        .upload(storagePath, blob, { contentType: mimeType || "audio/webm" });
+
+      if (uploadError) {
+        throw new Error(uploadError.message || "Unable to upload the recording.");
       }
 
       const transcribeResponse = await fetch("/api/transcribe", {
         method: "POST",
-        body: formData
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          storagePath,
+          durationSeconds: seconds,
+          workspaceId: workspaceId || null
+        })
       });
       const transcribeJson = (await transcribeResponse.json()) as {
         transcript?: string;

@@ -12,7 +12,7 @@ export default async function RecordPage({
 }: {
   searchParams: Promise<{ workspaceId?: string }>;
 }) {
-  await requireUser();
+  const user = await requireUser();
   const { workspaceId } = await searchParams;
   const workspaces = await getWorkspaces();
 
@@ -30,7 +30,7 @@ export default async function RecordPage({
     >
       <div className="mx-auto max-w-3xl">
         <section className="surface rounded-md p-5 sm:p-6">
-          <Recorder workspaces={workspaces} initialWorkspaceId={workspaceId ?? ""} />
+          <Recorder workspaces={workspaces} initialWorkspaceId={workspaceId ?? ""} userId={user.id} />
         </section>
       </div>
     </AppShell>
