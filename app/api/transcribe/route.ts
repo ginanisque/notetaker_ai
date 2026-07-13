@@ -80,10 +80,12 @@ export async function POST(request: Request) {
 
     return NextResponse.json({ transcript: transcription.text, audioUrl: storagePath });
   } catch (error) {
+    // Deliberately do NOT remove the uploaded audio here: a transient failure
+    // (OpenAI hiccup, timeout, etc.) should let the client retry transcription
+    // against the same storagePath instead of forcing a full re-upload. Audio
+    // is only removed for the intentional-rejection paths above (rate limit,
+    // usage cap), where retrying wouldn't help anyway.
     console.error("Transcription failed:", error);
-    if (storagePath) {
-      await removeMeetingAudio(storagePath);
-    }
     return NextResponse.json({ error: getApiErrorMessage(error, "Transcription failed.") }, { status: 500 });
   }
 }

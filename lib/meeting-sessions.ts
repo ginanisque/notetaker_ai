@@ -25,6 +25,11 @@ function mapSession(row: MeetingSessionRow): MeetingSession {
   };
 }
 
+// A session an owner never explicitly ended (crashed tab, PC power loss,
+// browser killed mid-recording) would otherwise stay "active" forever,
+// permanently locking teammates out of recording in that workspace.
+const STALE_SESSION_MS = 4 * 60 * 60 * 1000;
+
 export async function getActiveMeetingSession(workspaceId: string) {
   const supabase = await createSupabaseServerClient();
   const { data, error } = await supabase
@@ -40,7 +45,23 @@ export async function getActiveMeetingSession(workspaceId: string) {
     throw new Error(error.message);
   }
 
-  return data ? mapSession(data as MeetingSessionRow) : null;
+  if (!data) return null;
+
+  const row = data as MeetingSessionRow;
+  if (Date.now() - new Date(row.started_at).getTime() > STALE_SESSION_MS) {
+    const { error: endError } = await supabase
+      .from("meeting_sessions")
+      .update({ status: "ended", ended_at: new Date().toISOString() })
+      .eq("id", row.id);
+
+    if (endError) {
+      throw new Error(endError.message);
+    }
+
+    return null;
+  }
+
+  return mapSession(row);
 }
 
 export async function startMeetingSession(workspaceId: string, title?: string | null, takeOver = false) {

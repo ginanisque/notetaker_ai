@@ -4,6 +4,15 @@ import { CalendarClock, ExternalLink, Mic, Radio, Square, Upload, Users } from "
 import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import StatusMessage from "@/components/StatusMessage";
+import {
+  deleteSession,
+  getChunks,
+  listSessions,
+  saveChunk,
+  saveSessionMeta,
+  updateSessionMeta,
+  type RecordingSessionMeta
+} from "@/lib/recording-store";
 import { createSupabaseBrowserClient } from "@/lib/supabase/browser";
 import type {
   CalendarEventPrefill,
@@ -16,6 +25,26 @@ import type {
 import { formatDate } from "@/lib/utils";
 
 type ProcessingStep = "idle" | "recording" | "transcribing" | "summarizing" | "saving" | "complete";
+
+type StageResults = {
+  storagePath?: string;
+  audioUrl?: string | null;
+  transcript?: string;
+  summary?: MeetingSummary;
+  audioFileName?: string;
+};
+
+type RecordingContext = {
+  workspaceId: string | null;
+  meetingTitle: string;
+  calendarEvent: CalendarEventPrefill | null;
+  seconds: number;
+};
+
+// MediaRecorder is asked for a chunk every 10s (instead of only at stop) so
+// each chunk can be autosaved to IndexedDB as recording happens - see
+// lib/recording-store.ts. That's what makes a mid-recording crash recoverable.
+const AUTOSAVE_TIMESLICE_MS = 10000;
 
 function formatTimer(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60)
@@ -53,10 +82,19 @@ export default function Recorder({
   const [seconds, setSeconds] = useState(0);
   const [audioUrl, setAudioUrl] = useState<string | null>(null);
   const [error, setError] = useState("");
+  const [canRetry, setCanRetry] = useState(false);
+  const [recoverableSessions, setRecoverableSessions] = useState<RecordingSessionMeta[]>([]);
+  const [recoveringKey, setRecoveringKey] = useState<string | null>(null);
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const sessionIdRef = useRef<string | null>(null);
+  const secondsRef = useRef(0);
+  const recoveryKeyRef = useRef<string>("");
+  const chunkIndexRef = useRef(0);
+  const mimeTypeRef = useRef<string>("audio/webm");
+  const stageResultsRef = useRef<StageResults>({});
+  const activeCtxRef = useRef<RecordingContext | null>(null);
 
   const isRecording = step === "recording";
   const isProcessing = ["transcribing", "summarizing", "saving"].includes(step);
@@ -65,9 +103,31 @@ export default function Recorder({
   useEffect(() => {
     if (!isRecording) return;
 
-    const interval = window.setInterval(() => setSeconds((current) => current + 1), 1000);
+    const interval = window.setInterval(() => {
+      setSeconds((current) => {
+        const next = current + 1;
+        secondsRef.current = next;
+        void updateSessionMeta(recoveryKeyRef.current, { seconds: next });
+        return next;
+      });
+    }, 1000);
     return () => window.clearInterval(interval);
   }, [isRecording]);
+
+  useEffect(() => {
+    if (!isRecording) return;
+
+    const handler = (event: BeforeUnloadEvent) => {
+      event.preventDefault();
+      event.returnValue = "";
+    };
+    window.addEventListener("beforeunload", handler);
+    return () => window.removeEventListener("beforeunload", handler);
+  }, [isRecording]);
+
+  useEffect(() => {
+    void listSessions().then(setRecoverableSessions);
+  }, []);
 
   useEffect(() => {
     return () => {
@@ -123,16 +183,16 @@ export default function Recorder({
     };
   }, [workspaceId]);
 
-  async function startWorkspaceSession(takeOver = false) {
-    if (!workspaceId) return null;
+  async function startWorkspaceSession(opts: { workspaceId: string | null; title: string; takeOver?: boolean }) {
+    if (!opts.workspaceId) return null;
 
     const response = await fetch("/api/meeting-sessions", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        workspaceId,
-        title: meetingTitle.trim(),
-        takeOver
+        workspaceId: opts.workspaceId,
+        title: opts.title,
+        takeOver: Boolean(opts.takeOver)
       })
     });
     const body = (await response.json()) as MeetingSession | { error?: string };
@@ -166,34 +226,59 @@ export default function Recorder({
 
   async function startListening() {
     setError("");
+    setCanRetry(false);
     setSeconds(0);
+    secondsRef.current = 0;
     chunksRef.current = [];
+    chunkIndexRef.current = 0;
+    stageResultsRef.current = {};
+    activeCtxRef.current = null;
+
+    const recoveryKey = crypto.randomUUID();
+    recoveryKeyRef.current = recoveryKey;
 
     try {
       if (workspaceId && !canRecordInWorkspace) {
         throw new Error("Another team member is already recording in this workspace.");
       }
 
-      const sessionId = await startWorkspaceSession(false);
+      const sessionId = await startWorkspaceSession({ workspaceId: workspaceId || null, title: meetingTitle.trim() });
       setCurrentSessionId(sessionId);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
+      mimeTypeRef.current = mimeType || "audio/webm";
       const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = recorder;
 
+      await saveSessionMeta({
+        key: recoveryKey,
+        workspaceId: workspaceId || null,
+        meetingTitle: meetingTitle.trim(),
+        mimeType: mimeTypeRef.current,
+        startedAt: new Date().toISOString(),
+        seconds: 0,
+        calendarEvent
+      });
+
       recorder.ondataavailable = (event) => {
-        if (event.data.size > 0) chunksRef.current.push(event.data);
+        if (event.data.size > 0) {
+          chunksRef.current.push(event.data);
+          const index = chunkIndexRef.current;
+          chunkIndexRef.current += 1;
+          void saveChunk(recoveryKey, index, event.data);
+        }
       };
 
       recorder.onstop = () => {
-        void processRecording(mimeType || "audio/webm");
+        void processRecording(recoveryKey);
       };
 
-      recorder.start();
+      recorder.start(AUTOSAVE_TIMESLICE_MS);
       setStep("recording");
     } catch (reason) {
       await endWorkspaceSession(sessionIdRef.current);
+      await deleteSession(recoveryKey);
       setError(
         reason instanceof DOMException && reason.name === "NotAllowedError"
           ? "Microphone access was denied. Please allow microphone access and try again."
@@ -211,14 +296,28 @@ export default function Recorder({
     streamRef.current = null;
   }
 
-  async function processRecording(mimeType: string) {
+  async function processRecording(recoveryKey: string) {
+    const mimeType = mimeTypeRef.current;
     const blob = new Blob(chunksRef.current, { type: mimeType });
 
     if (!blob.size) {
       setError("No audio was captured. Please try recording again.");
       setStep("idle");
+      setCanRetry(false);
+      await deleteSession(recoveryKey);
       return;
     }
+
+    if (!activeCtxRef.current) {
+      activeCtxRef.current = {
+        workspaceId: workspaceId || null,
+        meetingTitle: meetingTitle.trim(),
+        calendarEvent,
+        seconds: secondsRef.current
+      };
+    }
+    const ctx = activeCtxRef.current;
+    const results = stageResultsRef.current;
 
     if (audioUrl) URL.revokeObjectURL(audioUrl);
     setAudioUrl(URL.createObjectURL(blob));
@@ -226,75 +325,93 @@ export default function Recorder({
     try {
       setStep("transcribing");
       const extension = mimeType.includes("webm") ? "webm" : "audio";
-      const audioFileName = `meeting-${Date.now()}.${extension}`;
+      const audioFileName = results.audioFileName ?? `meeting-${Date.now()}.${extension}`;
+      results.audioFileName = audioFileName;
 
-      const supabase = createSupabaseBrowserClient();
-      const storagePath = `${userId}/${crypto.randomUUID()}.${extension}`;
-      const { error: uploadError } = await supabase.storage
-        .from("meeting-audio")
-        .upload(storagePath, blob, { contentType: mimeType || "audio/webm" });
+      let storagePath = results.storagePath;
+      if (!storagePath) {
+        const supabase = createSupabaseBrowserClient();
+        storagePath = `${userId}/${crypto.randomUUID()}.${extension}`;
+        const { error: uploadError } = await supabase.storage
+          .from("meeting-audio")
+          .upload(storagePath, blob, { contentType: mimeType || "audio/webm" });
 
-      if (uploadError) {
-        throw new Error(uploadError.message || "Unable to upload the recording.");
+        if (uploadError) {
+          throw new Error(uploadError.message || "Unable to upload the recording.");
+        }
+        results.storagePath = storagePath;
+        await updateSessionMeta(recoveryKey, { storagePath });
       }
 
-      const transcribeResponse = await fetch("/api/transcribe", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          storagePath,
-          durationSeconds: seconds,
-          workspaceId: workspaceId || null
-        })
-      });
-      const transcribeJson = (await transcribeResponse.json()) as {
-        transcript?: string;
-        audioUrl?: string | null;
-        error?: string;
-        code?: string;
-      };
-      if (!transcribeResponse.ok || !transcribeJson.transcript) {
-        if (transcribeJson.code === "USAGE_CAP_EXCEEDED") {
-          throw new Error(`${transcribeJson.error} Visit /billing to upgrade.`);
+      let transcript = results.transcript;
+      if (!transcript) {
+        const transcribeResponse = await fetch("/api/transcribe", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            storagePath,
+            durationSeconds: ctx.seconds,
+            workspaceId: ctx.workspaceId
+          })
+        });
+        const transcribeJson = (await transcribeResponse.json()) as {
+          transcript?: string;
+          audioUrl?: string | null;
+          error?: string;
+          code?: string;
+        };
+        if (!transcribeResponse.ok || !transcribeJson.transcript) {
+          if (transcribeJson.code === "USAGE_CAP_EXCEEDED") {
+            throw new Error(`${transcribeJson.error} Visit /billing to upgrade.`);
+          }
+          if (transcribeJson.code === "RATE_LIMITED") {
+            throw new Error(transcribeJson.error || "Too many requests. Please wait a few minutes and try again.");
+          }
+          throw new Error(transcribeJson.error || "Transcription failed.");
         }
-        if (transcribeJson.code === "RATE_LIMITED") {
-          throw new Error(transcribeJson.error || "Too many requests. Please wait a few minutes and try again.");
-        }
-        throw new Error(transcribeJson.error || "Transcription failed.");
+        transcript = transcribeJson.transcript;
+        results.transcript = transcript;
+        results.audioUrl = transcribeJson.audioUrl ?? null;
+        await updateSessionMeta(recoveryKey, { transcript, audioUrl: results.audioUrl });
       }
 
       setStep("summarizing");
-      const summarizeResponse = await fetch("/api/summarize", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          transcript: transcribeJson.transcript,
-          meetingTitle: meetingTitle.trim()
-        })
-      });
-      const summarizeJson = (await summarizeResponse.json()) as MeetingSummary | { error?: string };
-      if (!summarizeResponse.ok || "error" in summarizeJson) {
-        throw new Error(("error" in summarizeJson && summarizeJson.error) || "Summarization failed.");
+      let summary = results.summary;
+      if (!summary) {
+        const summarizeResponse = await fetch("/api/summarize", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            transcript,
+            meetingTitle: ctx.meetingTitle
+          })
+        });
+        const summarizeJson = (await summarizeResponse.json()) as MeetingSummary | { error?: string };
+        if (!summarizeResponse.ok || "error" in summarizeJson) {
+          throw new Error(("error" in summarizeJson && summarizeJson.error) || "Summarization failed.");
+        }
+        summary = summarizeJson as MeetingSummary;
+        results.summary = summary;
+        await updateSessionMeta(recoveryKey, { summary });
       }
-      const summary = summarizeJson as MeetingSummary;
 
       setStep("saving");
       const meetingDate = new Date();
-      const title =
-        summary.meetingTitle || meetingTitle.trim() || formatFallbackTitle(selectedWorkspace?.name, meetingDate);
+      const contextWorkspace = workspaces.find((workspace) => workspace.id === ctx.workspaceId);
+      const title = summary.meetingTitle || ctx.meetingTitle || formatFallbackTitle(contextWorkspace?.name, meetingDate);
       const meeting: SaveMeetingInput = {
         title,
-        workspaceId: workspaceId || null,
+        workspaceId: ctx.workspaceId,
         meetingSessionId: sessionIdRef.current,
         date: meetingDate.toISOString(),
-        transcript: transcribeJson.transcript,
+        transcript,
         summary: { ...summary, meetingTitle: title },
-        audioUrl: transcribeJson.audioUrl ?? null,
+        audioUrl: results.audioUrl ?? null,
         audioFileName,
-        calendarProvider: calendarEvent ? "google" : null,
-        calendarEventId: calendarEvent?.calendarEventId ?? null,
-        calendarEventUrl: calendarEvent?.meetingUrl ?? null,
-        attendeesJson: calendarEvent?.attendees.length ? calendarEvent.attendees : null
+        calendarProvider: ctx.calendarEvent ? "google" : null,
+        calendarEventId: ctx.calendarEvent?.calendarEventId ?? null,
+        calendarEventUrl: ctx.calendarEvent?.meetingUrl ?? null,
+        attendeesJson: ctx.calendarEvent?.attendees.length ? ctx.calendarEvent.attendees : null
       };
 
       const saveResponse = await fetch("/api/meetings", {
@@ -309,13 +426,68 @@ export default function Recorder({
       const savedMeeting = saveJson as MeetingRecord;
 
       setStep("complete");
+      setCanRetry(false);
+      activeCtxRef.current = null;
+      await deleteSession(recoveryKey);
       router.push(`/meetings/${savedMeeting.id}`);
     } catch (reason) {
       setError(reason instanceof Error ? reason.message : "Something went wrong while processing the meeting.");
       setStep("idle");
+      setCanRetry(true);
     } finally {
       await endWorkspaceSession(sessionIdRef.current);
     }
+  }
+
+  async function handleRecoverSession(session: RecordingSessionMeta) {
+    setError("");
+    setRecoveringKey(session.key);
+    try {
+      const chunks = await getChunks(session.key);
+      if (!chunks.length) {
+        await deleteSession(session.key);
+        setRecoverableSessions((prev) => prev.filter((entry) => entry.key !== session.key));
+        return;
+      }
+
+      recoveryKeyRef.current = session.key;
+      mimeTypeRef.current = session.mimeType || "audio/webm";
+      chunksRef.current = chunks;
+      stageResultsRef.current = {
+        storagePath: session.storagePath,
+        audioUrl: session.audioUrl,
+        transcript: session.transcript,
+        summary: session.summary as MeetingSummary | undefined
+      };
+      activeCtxRef.current = {
+        workspaceId: session.workspaceId,
+        meetingTitle: session.meetingTitle,
+        calendarEvent: (session.calendarEvent as CalendarEventPrefill | null) ?? null,
+        seconds: session.seconds
+      };
+      setCanRetry(true);
+
+      try {
+        sessionIdRef.current = await startWorkspaceSession({
+          workspaceId: session.workspaceId,
+          title: session.meetingTitle,
+          takeOver: false
+        });
+      } catch {
+        sessionIdRef.current = null;
+      }
+
+      setRecoverableSessions((prev) => prev.filter((entry) => entry.key !== session.key));
+      setStep("transcribing");
+      await processRecording(session.key);
+    } finally {
+      setRecoveringKey(null);
+    }
+  }
+
+  async function handleDiscardSession(key: string) {
+    await deleteSession(key);
+    setRecoverableSessions((prev) => prev.filter((entry) => entry.key !== key));
   }
 
   const status = {
@@ -329,6 +501,38 @@ export default function Recorder({
 
   return (
     <div className="space-y-6">
+      {recoverableSessions.map((session) => (
+        <StatusMessage key={session.key} tone="error">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>
+              Found an unsaved recording from{" "}
+              {new Intl.DateTimeFormat("en", { dateStyle: "medium", timeStyle: "short" }).format(
+                new Date(session.startedAt)
+              )}{" "}
+              (~{formatTimer(session.seconds)}) that didn&apos;t finish saving.
+            </span>
+            <span className="flex shrink-0 gap-2">
+              <button
+                type="button"
+                onClick={() => void handleRecoverSession(session)}
+                disabled={recoveringKey === session.key || isRecording || isProcessing}
+                className="rounded-md bg-white px-3 py-1 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                {recoveringKey === session.key ? "Recovering..." : "Recover"}
+              </button>
+              <button
+                type="button"
+                onClick={() => void handleDiscardSession(session.key)}
+                disabled={recoveringKey === session.key}
+                className="rounded-md border border-red-300 px-3 py-1 text-sm font-semibold text-red-700 disabled:cursor-not-allowed disabled:opacity-50"
+              >
+                Discard
+              </button>
+            </span>
+          </div>
+        </StatusMessage>
+      ))}
+
       {calendarEvent ? (
         <div className="surface space-y-2 rounded-md p-4">
           <p className="text-sm font-semibold uppercase tracking-wide text-accent">From Google Calendar</p>
@@ -421,8 +625,8 @@ export default function Recorder({
               type="button"
               onClick={() => {
                 setError("");
-                void startWorkspaceSession(true).catch((reason) =>
-                  setError(reason instanceof Error ? reason.message : "Unable to take over recording.")
+                void startWorkspaceSession({ workspaceId, title: meetingTitle.trim(), takeOver: true }).catch(
+                  (reason) => setError(reason instanceof Error ? reason.message : "Unable to take over recording.")
                 );
               }}
               className="ml-3 rounded-md bg-white px-3 py-1 text-sm font-semibold text-red-700"
@@ -447,7 +651,7 @@ export default function Recorder({
           <button
             type="button"
             onClick={startListening}
-            disabled={isRecording || isProcessing || (workspaceId ? !canRecordInWorkspace : false)}
+            disabled={isRecording || isProcessing || recoveringKey !== null || (workspaceId ? !canRecordInWorkspace : false)}
             className="inline-flex items-center gap-2 rounded-md bg-accent px-4 py-3 font-semibold text-white shadow-sm transition hover:bg-[#1f5f55] disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Mic className="h-5 w-5" aria-hidden />
@@ -472,7 +676,26 @@ export default function Recorder({
         </span>
       </StatusMessage>
 
-      {error ? <StatusMessage tone="error">{error}</StatusMessage> : null}
+      {error ? (
+        <StatusMessage tone="error">
+          <div className="flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
+            <span>{error}</span>
+            {canRetry && !isRecording && !isProcessing ? (
+              <button
+                type="button"
+                onClick={() => {
+                  setError("");
+                  setStep("transcribing");
+                  void processRecording(recoveryKeyRef.current);
+                }}
+                className="shrink-0 rounded-md bg-white px-3 py-1 text-sm font-semibold text-red-700"
+              >
+                Retry
+              </button>
+            ) : null}
+          </div>
+        </StatusMessage>
+      ) : null}
 
       {audioUrl ? (
         <div className="space-y-2">
