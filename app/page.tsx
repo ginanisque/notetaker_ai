@@ -66,6 +66,12 @@ export default function HomePage() {
             </div>
           ))}
         </div>
+
+        <footer className="mt-14 flex justify-center">
+          <Link href="/privacy" className="text-sm font-medium text-neutral-500 hover:text-accent">
+            Privacy Policy
+          </Link>
+        </footer>
       </section>
     </main>
   );

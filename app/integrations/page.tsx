@@ -1,3 +1,4 @@
+import Link from "next/link";
 import AppShell from "@/components/AppShell";
 import GoogleConnectionPanel from "@/components/GoogleConnectionPanel";
 import StatusMessage from "@/components/StatusMessage";
@@ -31,7 +32,12 @@ export default async function IntegrationsPage({
 
         <StatusMessage>
           Your calendar is used only to help you prepare meeting notes. The app does not join meetings
-          automatically, send invites, or edit your calendar. We request read-only access to your event list.
+          automatically, send invites, or edit your calendar. We request read-only access to your event list. Read
+          the full{" "}
+          <Link href="/privacy" className="font-semibold text-accent hover:underline">
+            Privacy Policy
+          </Link>
+          .
         </StatusMessage>
       </div>
     </AppShell>
