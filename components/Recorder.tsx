@@ -46,6 +46,10 @@ type RecordingContext = {
 // lib/recording-store.ts. That's what makes a mid-recording crash recoverable.
 const AUTOSAVE_TIMESLICE_MS = 10000;
 
+const RECORDING_CAP_SECONDS = 40 * 60;
+const WARNING_LEAD_SECONDS = 10 * 60;
+const EXTENSION_SECONDS = 20 * 60;
+
 function formatTimer(totalSeconds: number) {
   const minutes = Math.floor(totalSeconds / 60)
     .toString()
@@ -85,8 +89,12 @@ export default function Recorder({
   const [canRetry, setCanRetry] = useState(false);
   const [recoverableSessions, setRecoverableSessions] = useState<RecordingSessionMeta[]>([]);
   const [recoveringKey, setRecoveringKey] = useState<string | null>(null);
+  const [showExtendPrompt, setShowExtendPrompt] = useState(false);
+  const [systemAudioNotice, setSystemAudioNotice] = useState("");
   const mediaRecorderRef = useRef<MediaRecorder | null>(null);
   const streamRef = useRef<MediaStream | null>(null);
+  const displayStreamRef = useRef<MediaStream | null>(null);
+  const audioContextRef = useRef<AudioContext | null>(null);
   const chunksRef = useRef<BlobPart[]>([]);
   const sessionIdRef = useRef<string | null>(null);
   const secondsRef = useRef(0);
@@ -95,6 +103,8 @@ export default function Recorder({
   const mimeTypeRef = useRef<string>("audio/webm");
   const stageResultsRef = useRef<StageResults>({});
   const activeCtxRef = useRef<RecordingContext | null>(null);
+  const capSecondsRef = useRef(RECORDING_CAP_SECONDS);
+  const warningIssuedForCapRef = useRef<number | null>(null);
 
   const isRecording = step === "recording";
   const isProcessing = ["transcribing", "summarizing", "saving"].includes(step);
@@ -110,6 +120,15 @@ export default function Recorder({
         void updateSessionMeta(recoveryKeyRef.current, { seconds: next });
         return next;
       });
+
+      const elapsed = secondsRef.current;
+      const cap = capSecondsRef.current;
+      if (elapsed >= cap) {
+        stopRecording();
+      } else if (cap - elapsed <= WARNING_LEAD_SECONDS && warningIssuedForCapRef.current !== cap) {
+        warningIssuedForCapRef.current = cap;
+        setShowExtendPrompt(true);
+      }
     }, 1000);
     return () => window.clearInterval(interval);
   }, [isRecording]);
@@ -132,6 +151,10 @@ export default function Recorder({
   useEffect(() => {
     return () => {
       streamRef.current?.getTracks().forEach((track) => track.stop());
+      displayStreamRef.current?.getTracks().forEach((track) => track.stop());
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        void audioContextRef.current.close();
+      }
       if (audioUrl) URL.revokeObjectURL(audioUrl);
     };
   }, [audioUrl]);
@@ -224,6 +247,50 @@ export default function Recorder({
     setActiveSession(null);
   }
 
+  // getUserMedia only captures the mic, so other participants only reach it
+  // acoustically (speaker -> air -> mic) and get suppressed by echo
+  // cancellation. Sharing a screen/tab with "Share audio" gives a clean
+  // digital feed of the meeting app's own output, which we mix with the mic
+  // via the Web Audio API. This is best-effort: any failure/decline/missing
+  // audio track falls back to the mic-only stream instead of blocking.
+  async function acquireCombinedStream(micStream: MediaStream): Promise<MediaStream> {
+    if (!navigator.mediaDevices.getDisplayMedia) {
+      return micStream;
+    }
+
+    try {
+      const displayStream = await navigator.mediaDevices.getDisplayMedia({ video: true, audio: true });
+      displayStream.getVideoTracks().forEach((track) => track.stop());
+
+      const displayAudioTracks = displayStream.getAudioTracks();
+      if (displayAudioTracks.length === 0) {
+        displayStream.getTracks().forEach((track) => track.stop());
+        setSystemAudioNotice(
+          'No audio was shared, so only your microphone will be recorded. Next time, check "Share audio" when prompted to capture everyone clearly.'
+        );
+        return micStream;
+      }
+
+      displayStreamRef.current = displayStream;
+      displayAudioTracks[0].onended = () => {
+        setSystemAudioNotice("Screen/tab audio sharing stopped - continuing with microphone only.");
+      };
+
+      const audioContext = new AudioContext();
+      audioContextRef.current = audioContext;
+      const destination = audioContext.createMediaStreamDestination();
+      audioContext.createMediaStreamSource(micStream).connect(destination);
+      audioContext.createMediaStreamSource(new MediaStream(displayAudioTracks)).connect(destination);
+
+      return destination.stream;
+    } catch {
+      setSystemAudioNotice(
+        'Recording microphone only - screen/tab audio wasn\'t shared. Start again and check "Share audio" when prompted to capture everyone clearly.'
+      );
+      return micStream;
+    }
+  }
+
   async function startListening() {
     setError("");
     setCanRetry(false);
@@ -233,6 +300,10 @@ export default function Recorder({
     chunkIndexRef.current = 0;
     stageResultsRef.current = {};
     activeCtxRef.current = null;
+    capSecondsRef.current = RECORDING_CAP_SECONDS;
+    warningIssuedForCapRef.current = null;
+    setShowExtendPrompt(false);
+    setSystemAudioNotice("");
 
     const recoveryKey = crypto.randomUUID();
     recoveryKeyRef.current = recoveryKey;
@@ -246,9 +317,12 @@ export default function Recorder({
       setCurrentSessionId(sessionId);
       const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
       streamRef.current = stream;
+
+      const recordingStream = await acquireCombinedStream(stream);
+
       const mimeType = MediaRecorder.isTypeSupported("audio/webm") ? "audio/webm" : "";
       mimeTypeRef.current = mimeType || "audio/webm";
-      const recorder = new MediaRecorder(stream, mimeType ? { mimeType } : undefined);
+      const recorder = new MediaRecorder(recordingStream, mimeType ? { mimeType } : undefined);
       mediaRecorderRef.current = recorder;
 
       await saveSessionMeta({
@@ -277,6 +351,14 @@ export default function Recorder({
       recorder.start(AUTOSAVE_TIMESLICE_MS);
       setStep("recording");
     } catch (reason) {
+      streamRef.current?.getTracks().forEach((track) => track.stop());
+      streamRef.current = null;
+      displayStreamRef.current?.getTracks().forEach((track) => track.stop());
+      displayStreamRef.current = null;
+      if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+        void audioContextRef.current.close();
+      }
+      audioContextRef.current = null;
       await endWorkspaceSession(sessionIdRef.current);
       await deleteSession(recoveryKey);
       setError(
@@ -294,6 +376,17 @@ export default function Recorder({
     }
     streamRef.current?.getTracks().forEach((track) => track.stop());
     streamRef.current = null;
+    displayStreamRef.current?.getTracks().forEach((track) => track.stop());
+    displayStreamRef.current = null;
+    if (audioContextRef.current && audioContextRef.current.state !== "closed") {
+      void audioContextRef.current.close();
+    }
+    audioContextRef.current = null;
+  }
+
+  function extendRecording() {
+    capSecondsRef.current += EXTENSION_SECONDS;
+    setShowExtendPrompt(false);
   }
 
   async function processRecording(recoveryKey: string) {
@@ -613,8 +706,13 @@ export default function Recorder({
       </div>
 
       <StatusMessage>
-        Please inform meeting participants that this meeting is being recorded and transcribed for note-taking purposes.
+        Please inform meeting participants that this meeting is being recorded and transcribed for note-taking
+        purposes. When you click Start, you&apos;ll also be asked to share a screen or tab with &quot;Share
+        audio&quot; checked — choose &quot;Entire Screen&quot; for a WhatsApp call, or the meeting tab for Google
+        Meet — so everyone&apos;s voice is captured clearly, not just yours.
       </StatusMessage>
+
+      {systemAudioNotice ? <StatusMessage>{systemAudioNotice}</StatusMessage> : null}
 
       {workspaceId && activeSession && !canRecordInWorkspace ? (
         <StatusMessage tone="error">
@@ -668,6 +766,24 @@ export default function Recorder({
           </button>
         </div>
       </div>
+
+      {showExtendPrompt && isRecording ? (
+        <StatusMessage tone="error">
+          <div className="flex flex-wrap items-center justify-between gap-3">
+            <span>
+              Recording will stop automatically in {formatTimer(Math.max(0, capSecondsRef.current - seconds))} to
+              keep meetings manageable.
+            </span>
+            <button
+              type="button"
+              onClick={extendRecording}
+              className="shrink-0 rounded-md bg-white px-3 py-1 text-sm font-semibold text-red-700"
+            >
+              Continue recording (+20 min)
+            </button>
+          </div>
+        </StatusMessage>
+      ) : null}
 
       <StatusMessage tone={step === "complete" ? "success" : "info"}>
         <span className="inline-flex items-center gap-2">
