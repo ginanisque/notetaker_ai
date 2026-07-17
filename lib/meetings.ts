@@ -398,6 +398,18 @@ export async function restoreMeeting(id: string): Promise<boolean> {
   return Boolean(data);
 }
 
+export async function purgeMeetingNow(id: string): Promise<{ purged: boolean; audioUrl: string | null }> {
+  const supabase = await createSupabaseServerClient();
+  const { data, error } = await supabase.rpc("purge_meeting_now", { p_meeting_id: id });
+
+  if (error) {
+    throw new Error(error.message);
+  }
+
+  const row = (Array.isArray(data) ? data[0] : data) as { audio_url: string | null } | undefined;
+  return { purged: Boolean(row), audioUrl: row?.audio_url ?? null };
+}
+
 export async function saveMeeting(input: SaveMeetingInput): Promise<MeetingRecord> {
   const supabase = await createSupabaseServerClient();
   const {
